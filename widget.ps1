@@ -1,0 +1,1712 @@
+﻿param(
+  [int]$ParentPid = 0,
+  [switch]$SelfTest
+)
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$script:webViewDir = Join-Path $PSScriptRoot 'webview2'
+if (-not (Test-Path -LiteralPath (Join-Path $script:webViewDir 'Microsoft.Web.WebView2.WinForms.dll'))) {
+  throw "找不到 WebView2 SDK：$script:webViewDir"
+}
+[Environment]::CurrentDirectory = $script:webViewDir
+$env:PATH = ($script:webViewDir + ';' + $env:PATH)
+Add-Type -Path (Join-Path $script:webViewDir 'Microsoft.Web.WebView2.Core.dll')
+Add-Type -Path (Join-Path $script:webViewDir 'Microsoft.Web.WebView2.WinForms.dll')
+
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class ScreenSnapDpi {
+    [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+
+try {
+  [ScreenSnapDpi]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null
+} catch {
+  try { [ScreenSnapDpi]::SetProcessDPIAware() | Out-Null } catch { }
+}
+
+Add-Type -ReferencedAssemblies 'System.Windows.Forms', 'System.Drawing' -TypeDefinition @"
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+public static class ScreenSnapNative {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SIZE { public int cx; public int cy; }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct BLENDFUNCTION {
+        public byte BlendOp;
+        public byte BlendFlags;
+        public byte SourceConstantAlpha;
+        public byte AlphaFormat;
+    }
+
+    const int ULW_ALPHA = 2;
+    const byte AC_SRC_OVER = 0;
+    const byte AC_SRC_ALPHA = 1;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
+
+    [DllImport("user32.dll")] public static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr hObject);
+
+    public static bool Apply(IntPtr hwnd, Bitmap bitmap, int x, int y) {
+        IntPtr screenDc = GetDC(IntPtr.Zero);
+        IntPtr memDc = CreateCompatibleDC(screenDc);
+        IntPtr hBitmap = bitmap.GetHbitmap(Color.FromArgb(0));
+        IntPtr oldBitmap = SelectObject(memDc, hBitmap);
+        try {
+            SIZE size = new SIZE();
+            size.cx = bitmap.Width;
+            size.cy = bitmap.Height;
+            POINT src = new POINT();
+            src.X = 0;
+            src.Y = 0;
+            POINT dst = new POINT();
+            dst.X = x;
+            dst.Y = y;
+            BLENDFUNCTION blend = new BLENDFUNCTION();
+            blend.BlendOp = AC_SRC_OVER;
+            blend.BlendFlags = 0;
+            blend.SourceConstantAlpha = 255;
+            blend.AlphaFormat = AC_SRC_ALPHA;
+            return UpdateLayeredWindow(hwnd, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, ULW_ALPHA);
+        } finally {
+            SelectObject(memDc, oldBitmap);
+            DeleteObject(hBitmap);
+            DeleteDC(memDc);
+            ReleaseDC(IntPtr.Zero, screenDc);
+        }
+    }
+}
+
+public class ScreenSnapMainForm : Form {
+    public ScreenSnapMainForm() {
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        UpdateStyles();
+        AutoScaleMode = AutoScaleMode.None;
+    }
+}
+
+public class ScreenSnapFrozenForm : Form {
+    public ScreenSnapFrozenForm() {
+        SetStyle(ControlStyles.Opaque | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        UpdateStyles();
+        AutoScaleMode = AutoScaleMode.None;
+    }
+}
+
+public class ScreenSnapHudForm : Form {
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= 0x00000020;
+            cp.ExStyle |= 0x00080000;
+            cp.ExStyle |= 0x08000000;
+            cp.ExStyle |= 0x00000080;
+            return cp;
+        }
+    }
+}
+
+public class ScreenSnapBallForm : Form {
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= 0x00080000;
+            cp.ExStyle |= 0x08000000;
+            cp.ExStyle |= 0x00000080;
+            return cp;
+        }
+    }
+}
+
+public class ScreenSnapShadowForm : Form {
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= 0x00000020;
+            cp.ExStyle |= 0x00080000;
+            cp.ExStyle |= 0x08000000;
+            cp.ExStyle |= 0x00000080;
+            return cp;
+        }
+    }
+}
+"@
+
+$script:ballForm = $null
+$script:ballX = 0
+$script:ballY = 0
+$script:ballSize = 84
+$script:ballMargin = 8
+$script:ballWindow = 100
+$script:ballWindowHeight = 100
+$script:ballHover = $false
+$script:ballDrag = $null
+$script:shadowForm = $null
+$script:shadowMargin = 18
+$script:panelForm = $null
+$script:panelWidth = 440
+$script:panelHeight = 524
+$script:panelTail = 24
+$script:panelVisible = $false
+$script:panelAnimating = $false
+$script:panelAnimTimer = $null
+$script:panelAnimFrom = 24
+$script:panelAnimTo = 524
+$script:panelAnimStart = 0
+$script:panelAnimDone = $null
+$script:panelRevealTimer = $null
+$script:panelX = 0
+$script:panelY = 0
+$script:previewImage = $null
+$script:captureImageBase64 = $null
+$script:picture = $null
+$script:note = $null
+$script:card = $null
+$script:noteLabel = $null
+$script:notePanel = $null
+$script:buttonPanel = $null
+$script:title = $null
+$script:subtitle = $null
+$script:close = $null
+$script:panelControls = @()
+$script:web = $null
+$script:webCore = $null
+$script:webEnvironment = $null
+$script:pageReady = $false
+$script:webStarted = $false
+$script:panelUri = ''
+$script:panelImageWidth = 0
+$script:panelImageHeight = 0
+$script:pendingPanelHeight = 0
+$script:capturePublished = $false
+$script:hostQueue = $null
+$script:hostReader = $null
+$script:hostTimer = $null
+$script:toastAfterCollapse = ''
+$script:toast = $null
+$script:toastTimer = $null
+$script:parentTimer = $null
+$script:tooltip = $null
+$script:frozen = $null
+$script:hud = $null
+$script:frozenImage = $null
+$script:virtual = $null
+$script:captureBitmap = $null
+$script:selection = [System.Drawing.Rectangle]::Empty
+$script:selectStart = $null
+$script:selecting = $false
+$script:busy = $false
+
+function New-RoundedPath([int]$x, [int]$y, [int]$width, [int]$height, [int]$radius) {
+  $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
+  $diameter = $radius * 2
+  if ($diameter -gt $width) { $diameter = $width }
+  if ($diameter -gt $height) { $diameter = $height }
+  if ($diameter -lt 2) { $diameter = 2 }
+  $path.AddArc($x, $y, $diameter, $diameter, 180, 90)
+  $path.AddArc($x + $width - $diameter, $y, $diameter, $diameter, 270, 90)
+  $path.AddArc($x + $width - $diameter, $y + $height - $diameter, $diameter, $diameter, 0, 90)
+  $path.AddArc($x, $y + $height - $diameter, $diameter, $diameter, 90, 90)
+  $path.CloseFigure()
+  return $path
+}
+
+function Draw-WidgetIcon([System.Drawing.Graphics]$graphics, [int]$size) {
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $accent = [System.Drawing.Color]::FromArgb(77, 163, 255)
+  $penWidth = [single]([Math]::Max(2.0, $size * 0.045))
+  $pen = [System.Drawing.Pen]::new($accent, $penWidth)
+  $dot = [System.Drawing.SolidBrush]::new($accent)
+  try {
+    $radius = [single]($size * 0.18)
+    $center = [single]($size / 2)
+    $graphics.DrawEllipse($pen, ($center - $radius), ($center - $radius), ($radius * 2), ($radius * 2))
+    $graphics.DrawLine(
+      $pen,
+      ($center + $radius * 0.5),
+      ($center + $radius * 0.5),
+      ($center + $radius * 1.4),
+      ($center + $radius * 1.4)
+    )
+    $dotRadius = [single]($radius * 0.3)
+    $graphics.FillEllipse($dot, ($center - $dotRadius), ($center - $dotRadius), ($dotRadius * 2), ($dotRadius * 2))
+  } finally {
+    $dot.Dispose()
+    $pen.Dispose()
+  }
+}
+
+function New-BallBitmap {
+  $bitmap = [System.Drawing.Bitmap]::new(
+    $script:ballWindow,
+    $script:ballWindowHeight,
+    [System.Drawing.Imaging.PixelFormat]::Format32bppPArgb
+  )
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  try {
+    $graphics.Clear([System.Drawing.Color]::Transparent)
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+    for ($i = 0; $i -lt 4; $i++) {
+      $alpha = 20 - ($i * 4)
+      if ($alpha -lt 4) { $alpha = 4 }
+      $shadow = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb($alpha, 0, 0, 0))
+      try {
+        $graphics.FillEllipse(
+          $shadow,
+          ($script:ballMargin - $i),
+          ($script:ballMargin + 2 + $i),
+          ($script:ballSize + 2 * $i),
+          ($script:ballSize + 2 * $i)
+        )
+      } finally {
+        $shadow.Dispose()
+      }
+    }
+
+    $background = [System.Drawing.Color]::FromArgb(30, 36, 48)
+    if ($script:ballHover) { $background = [System.Drawing.Color]::FromArgb(42, 52, 70) }
+    $fill = [System.Drawing.SolidBrush]::new($background)
+    try {
+      $graphics.FillEllipse($fill, $script:ballMargin, $script:ballMargin, ($script:ballSize - 1), ($script:ballSize - 1))
+    } finally {
+      $fill.Dispose()
+    }
+    $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1.4)
+    try {
+      $graphics.DrawEllipse($border, $script:ballMargin, $script:ballMargin, ($script:ballSize - 1), ($script:ballSize - 1))
+    } finally {
+      $border.Dispose()
+    }
+
+    $graphics.TranslateTransform($script:ballMargin, $script:ballMargin)
+    try {
+      Draw-WidgetIcon $graphics $script:ballSize
+    } finally {
+      $graphics.ResetTransform()
+    }
+  } finally {
+    $graphics.Dispose()
+  }
+  return $bitmap
+}
+
+function Update-Ball {
+  if ($null -eq $script:ballForm) { return }
+  $bitmap = New-BallBitmap
+  try {
+    [ScreenSnapNative]::Apply(
+      $script:ballForm.Handle,
+      $bitmap,
+      ($script:ballX - $script:ballMargin),
+      ($script:ballY - $script:ballMargin)
+    ) | Out-Null
+  } finally {
+    $bitmap.Dispose()
+  }
+}
+
+function Move-PanelToBall {
+  if ($null -eq $script:panelForm -or -not $script:panelForm.Visible) { return }
+  $screen = [System.Windows.Forms.Screen]::FromPoint(
+    [System.Drawing.Point]::new(($script:ballX + 42), ($script:ballY + 42))
+  )
+  $area = $screen.WorkingArea
+
+  if ($script:ballY -lt $area.Top + 8) {
+    $script:ballY = $area.Top + 8
+    Update-Ball
+  }
+
+  $panelX = $script:ballX + $script:ballSize - $script:panelWidth
+  if ($panelX -lt $area.Left + 8) {
+    $panelX = $area.Left + 8
+    $script:ballX = $panelX + $script:panelWidth - $script:ballSize
+    Update-Ball
+  }
+  if ($panelX + $script:panelWidth -gt $area.Right - 8) {
+    $panelX = $area.Right - 8 - $script:panelWidth
+    $script:ballX = $panelX + $script:panelWidth - $script:ballSize
+    Update-Ball
+  }
+
+  $panelY = $script:ballY + 82
+  if ($panelY + $script:panelForm.Height -gt $area.Bottom - 8) {
+    $panelY = $area.Bottom - 8 - $script:panelForm.Height
+    $script:ballY = $panelY - 82
+    if ($script:ballY -lt $area.Top + 8) {
+      $script:ballY = $area.Top + 8
+      $panelY = $script:ballY + 82
+    }
+    Update-Ball
+  }
+
+  $script:panelX = $panelX
+  $script:panelY = $panelY
+  $script:panelForm.Bounds = [System.Drawing.Rectangle]::new(
+    $script:panelX,
+    $script:panelY,
+    $script:panelWidth,
+    $script:panelForm.Height
+  )
+  Update-Shadow $script:panelWidth $script:panelForm.Height
+}
+
+function Draw-PanelSurface([System.Drawing.Graphics]$graphics, [int]$width, [int]$height) {
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  if ($height -le $script:panelTail) {
+    $tailPoints = @(
+      [System.Drawing.Point]::new(($width - 56), ($script:panelTail + 1)),
+      [System.Drawing.Point]::new(($width - 28), ($script:panelTail + 1)),
+      [System.Drawing.Point]::new(($width - 42), 0)
+    )
+    $tailBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
+    try {
+      $graphics.FillPolygon($tailBrush, $tailPoints)
+    } finally {
+      $tailBrush.Dispose()
+    }
+    return
+  }
+
+  $panelPath = New-RoundedPath 0 $script:panelTail $width ($height - $script:panelTail) 16
+  $panelFill = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(30, 36, 48))
+  try {
+    $graphics.FillPath($panelFill, $panelPath)
+  } finally {
+    $panelFill.Dispose()
+  }
+
+  $header = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
+  try {
+    $graphics.FillRectangle($header, 0, $script:panelTail, $width, 60)
+  } finally {
+    $header.Dispose()
+  }
+
+  $separator = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(44, 53, 68), 1)
+  try {
+    $separatorY = $script:panelTail + 60
+    $graphics.DrawLine($separator, 16, $separatorY, ($width - 16), $separatorY)
+  } finally {
+    $separator.Dispose()
+  }
+
+  $tailPoints = @(
+    [System.Drawing.Point]::new(($width - 56), ($script:panelTail + 1)),
+    [System.Drawing.Point]::new(($width - 28), ($script:panelTail + 1)),
+    [System.Drawing.Point]::new(($width - 42), 0)
+  )
+  $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
+  try {
+    $graphics.DrawPath($border, $panelPath)
+  } finally {
+    $border.Dispose()
+  }
+
+  $tailBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
+  $tailPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
+  try {
+    $graphics.FillPolygon($tailBrush, $tailPoints)
+    $graphics.DrawLine($tailPen, $tailPoints[0], $tailPoints[2])
+    $graphics.DrawLine($tailPen, $tailPoints[2], $tailPoints[1])
+  } finally {
+    $tailPen.Dispose()
+    $tailBrush.Dispose()
+    $panelPath.Dispose()
+  }
+}
+
+function Set-PanelRegion {
+  if ($null -eq $script:panelForm) { return }
+  Set-RoundedRegion $script:panelForm 16
+}
+
+function Draw-PanelCard([System.Drawing.Graphics]$graphics, [int]$width, [int]$height) {
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $panelPath = New-RoundedPath 0 0 $width $height 16
+  try {
+    $panelFill = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(30, 36, 48))
+    try {
+      $graphics.FillPath($panelFill, $panelPath)
+    } finally {
+      $panelFill.Dispose()
+    }
+
+    $header = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
+    try {
+      $graphics.FillRectangle($header, 0, 0, $width, 64)
+    } finally {
+      $header.Dispose()
+    }
+
+    $separator = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(44, 53, 68), 1)
+    try {
+      $graphics.DrawLine($separator, 16, 64, ($width - 16), 64)
+    } finally {
+      $separator.Dispose()
+    }
+
+    $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
+    try {
+      $graphics.DrawPath($border, $panelPath)
+    } finally {
+      $border.Dispose()
+    }
+  } finally {
+    $panelPath.Dispose()
+  }
+}
+
+function Set-PanelCardRegion([int]$width, [int]$height) {
+  if ($null -eq $script:panelForm) { return }
+  $path = New-RoundedPath 0 0 $width $height 16
+  try {
+    $region = [System.Drawing.Region]::new($path)
+    $old = $script:panelForm.Region
+    $script:panelForm.Region = $region
+    if ($null -ne $old) { $old.Dispose() }
+  } finally {
+    $path.Dispose()
+  }
+}
+
+function New-BubblePath([int]$width, [int]$height, [int]$tailHeight) {
+  $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
+  $diameter = 32
+  $top = $tailHeight
+  $bodyHeight = $height - $top
+  if ($diameter -gt $bodyHeight) { $diameter = $bodyHeight }
+  if ($diameter -lt 2) { $diameter = 2 }
+  $path.AddArc(0, $top, $diameter, $diameter, 180, 90)
+  $path.AddLine($diameter, $top, ($width - 56), $top)
+  $path.AddLine(($width - 56), $top, ($width - 42), 2)
+  $path.AddLine(($width - 42), 2, ($width - 28), $top)
+  $path.AddLine(($width - 28), $top, ($width - $diameter), $top)
+  $path.AddArc(($width - $diameter), $top, $diameter, $diameter, 270, 90)
+  $path.AddLine($width, ($top + $diameter), $width, ($height - $diameter))
+  $path.AddArc(($width - $diameter), ($height - $diameter), $diameter, $diameter, 0, 90)
+  $path.AddLine(($width - $diameter), $height, $diameter, $height)
+  $path.AddArc(0, ($height - $diameter), $diameter, $diameter, 90, 90)
+  $path.AddLine(0, ($height - $diameter), 0, ($top + $diameter))
+  $path.CloseFigure()
+  return $path
+}
+
+function Draw-PanelBubble([System.Drawing.Graphics]$graphics, [int]$width, [int]$height) {
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $path = New-BubblePath $width $height $script:panelTail
+  try {
+    $header = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
+    try {
+      $graphics.FillPath($header, $path)
+    } finally {
+      $header.Dispose()
+    }
+
+    $bodyTop = $script:panelTail + 64
+    if ($height -gt $bodyTop) {
+      $body = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(30, 36, 48))
+      try {
+        $graphics.FillRectangle($body, 0, $bodyTop, $width, ($height - $bodyTop))
+      } finally {
+        $body.Dispose()
+      }
+
+      $separator = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(44, 53, 68), 1)
+      try {
+        $graphics.DrawLine($separator, 16, $bodyTop, ($width - 16), $bodyTop)
+      } finally {
+        $separator.Dispose()
+      }
+    }
+
+    $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
+    try {
+      $graphics.DrawPath($border, $path)
+    } finally {
+      $border.Dispose()
+    }
+  } finally {
+    $path.Dispose()
+  }
+}
+
+function Set-PanelBubbleRegion([int]$width, [int]$height) {
+  if ($null -eq $script:panelForm) { return }
+  $path = New-BubblePath $width $height $script:panelTail
+  try {
+    $region = [System.Drawing.Region]::new($path)
+    $old = $script:panelForm.Region
+    $script:panelForm.Region = $region
+    if ($null -ne $old) { $old.Dispose() }
+  } finally {
+    $path.Dispose()
+  }
+}
+
+function Update-Shadow([int]$width, [int]$height) {
+  if ($null -eq $script:shadowForm -or -not $script:shadowForm.Visible) { return }
+  $margin = $script:shadowMargin
+  $bitmap = [System.Drawing.Bitmap]::new(
+    ($width + $margin * 2),
+    ($height + $margin * 2),
+    [System.Drawing.Imaging.PixelFormat]::Format32bppPArgb
+  )
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  try {
+    $graphics.Clear([System.Drawing.Color]::Transparent)
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    for ($i = 0; $i -lt 4; $i++) {
+      $alpha = 10 - ($i * 2)
+      if ($alpha -lt 2) { $alpha = 2 }
+      $left = $margin - $i
+      $top = $margin + 4 - $i
+      $shadowWidth = $width + $i * 2
+      $shadowHeight = $height + $i * 2
+      $path = New-RoundedPath $left $top $shadowWidth $shadowHeight (18 + $i)
+      try {
+        $brush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb($alpha, 0, 0, 0))
+        try {
+          $graphics.FillPath($brush, $path)
+        } finally {
+          $brush.Dispose()
+        }
+      } finally {
+        $path.Dispose()
+      }
+    }
+  } finally {
+    $graphics.Dispose()
+  }
+  try {
+    [ScreenSnapNative]::Apply(
+      $script:shadowForm.Handle,
+      $bitmap,
+      ($script:panelX - $margin),
+      ($script:panelY - $margin + 4)
+    ) | Out-Null
+  } finally {
+    $bitmap.Dispose()
+  }
+}
+
+function Show-Shadow {
+  if ($null -eq $script:shadowForm) {
+    $shadow = [ScreenSnapShadowForm]::new()
+    $shadow.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $shadow.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $shadow.Size = [System.Drawing.Size]::new(1, 1)
+    $shadow.TopMost = $true
+    $shadow.ShowInTaskbar = $false
+    $script:shadowForm = $shadow
+    $shadow.Show()
+  }
+  if (-not $script:shadowForm.Visible) { $script:shadowForm.Show() }
+  Update-Shadow $script:panelWidth 64
+}
+
+function Hide-Shadow {
+  if ($null -ne $script:shadowForm -and $script:shadowForm.Visible) {
+    $script:shadowForm.Hide()
+  }
+}
+
+function Set-RoundedRegion([System.Windows.Forms.Control]$control, [int]$radius) {
+  $path = New-RoundedPath 0 0 $control.Width $control.Height $radius
+  try {
+    $region = [System.Drawing.Region]::new($path)
+    $old = $control.Region
+    $control.Region = $region
+    if ($null -ne $old) { $old.Dispose() }
+  } finally {
+    $path.Dispose()
+  }
+}
+
+function Stop-PanelReveal {
+  if ($null -ne $script:panelRevealTimer) {
+    try {
+      $script:panelRevealTimer.Stop()
+      $script:panelRevealTimer.Dispose()
+    } catch { }
+    $script:panelRevealTimer = $null
+  }
+}
+
+function Stop-PanelAnimation {
+  if ($null -ne $script:panelAnimTimer) {
+    try {
+      $script:panelAnimTimer.Stop()
+      $script:panelAnimTimer.Dispose()
+    } catch { }
+    $script:panelAnimTimer = $null
+  }
+  $script:panelAnimating = $false
+  $script:panelAnimDone = $null
+}
+
+function Start-PanelAnimation([int]$fromHeight, [int]$toHeight, [scriptblock]$done) {
+  Stop-PanelAnimation
+  $script:panelAnimFrom = $fromHeight
+  $script:panelAnimTo = $toHeight
+  $script:panelAnimStart = [Environment]::TickCount
+  $script:panelAnimDone = $done
+  $script:panelAnimating = $true
+  $timer = [System.Windows.Forms.Timer]::new()
+  $timer.Interval = 15
+  $script:panelAnimTimer = $timer
+  $timer.Add_Tick({
+    if ($null -eq $script:panelAnimTimer) { return }
+    $elapsed = [Environment]::TickCount - $script:panelAnimStart
+    $progress = [Math]::Min(1.0, $elapsed / 180.0)
+    $eased = 1.0 - [Math]::Pow(1.0 - $progress, 3.0)
+    $height = [int]($script:panelAnimFrom + ($script:panelAnimTo - $script:panelAnimFrom) * $eased)
+    if ($height -lt $script:panelTail) { $height = $script:panelTail }
+    $script:panelForm.Bounds = [System.Drawing.Rectangle]::new(
+      $script:panelX,
+      $script:panelY,
+      $script:panelWidth,
+      $height
+    )
+    Set-PanelRegion
+    Update-Shadow $script:panelWidth $height
+    $script:panelForm.Invalidate()
+
+    if ($progress -ge 1.0) {
+      $script:panelAnimTimer.Stop()
+      $script:panelAnimTimer.Dispose()
+      $script:panelAnimTimer = $null
+      $script:panelAnimating = $false
+      $finalHeight = [Math]::Max($script:panelTail, $script:panelAnimTo)
+      $script:panelForm.Bounds = [System.Drawing.Rectangle]::new(
+        $script:panelX,
+        $script:panelY,
+        $script:panelWidth,
+        $finalHeight
+      )
+      Set-PanelRegion
+      Update-Shadow $script:panelWidth $finalHeight
+      $script:panelForm.Invalidate()
+      $callback = $script:panelAnimDone
+      $script:panelAnimDone = $null
+      if ($null -ne $callback) { & $callback }
+    }
+  })
+  $timer.Start()
+}
+
+function Hide-PanelControls {
+}
+
+function Show-PanelControls {
+}
+
+function Clear-PreviewData {
+  if ($null -ne $script:previewImage) {
+    $script:previewImage.Dispose()
+    $script:previewImage = $null
+  }
+  $script:captureImageBase64 = $null
+  $script:panelImageWidth = 0
+  $script:panelImageHeight = 0
+  $script:capturePublished = $false
+}
+
+function Show-Ball {
+  if ($null -eq $script:ballForm) { return }
+  $null = $script:ballForm.Handle
+  Update-Ball
+  if (-not $script:ballForm.Visible) { $script:ballForm.Show() }
+  $script:ballForm.TopMost = $true
+  $script:ballForm.BringToFront()
+}
+
+function Hide-Ball {
+  if ($null -ne $script:ballForm) { $script:ballForm.Hide() }
+}
+
+function Show-Toast([string]$message) {
+  if ($null -ne $script:toast) {
+    try { $script:toast.Close(); $script:toast.Dispose() } catch { }
+    $script:toast = $null
+  }
+  if ($null -ne $script:toastTimer) {
+    try { $script:toastTimer.Stop(); $script:toastTimer.Dispose() } catch { }
+    $script:toastTimer = $null
+  }
+
+  $toast = [System.Windows.Forms.Form]::new()
+  $toast.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+  $toast.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $toast.Size = [System.Drawing.Size]::new(320, 48)
+  $toast.TopMost = $true
+  $toast.ShowInTaskbar = $false
+  $toast.BackColor = [System.Drawing.Color]::FromArgb(30, 36, 48)
+
+  $label = [System.Windows.Forms.Label]::new()
+  $label.Text = $message
+  $label.ForeColor = [System.Drawing.Color]::White
+  $label.Dock = [System.Windows.Forms.DockStyle]::Fill
+  $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+  $toast.Controls.Add($label)
+
+  $left = $script:ballX - 330
+  if ($left -lt 8) { $left = 8 }
+  $toast.Location = [System.Drawing.Point]::new($left, $script:ballY)
+  $script:toast = $toast
+  $toast.Show()
+
+  $timer = [System.Windows.Forms.Timer]::new()
+  $timer.Interval = 1800
+  $script:toastTimer = $timer
+  $timer.Add_Tick({
+    $script:toastTimer.Stop()
+    if ($null -ne $script:toast) {
+      $script:toast.Close()
+      $script:toast.Dispose()
+      $script:toast = $null
+    }
+    $script:toastTimer.Dispose()
+    $script:toastTimer = $null
+  })
+  $timer.Start()
+}
+
+function Convert-ImageToBase64([System.Drawing.Image]$image) {
+  $stream = [System.IO.MemoryStream]::new()
+  try {
+    $image.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+    return [System.Convert]::ToBase64String($stream.ToArray())
+  } finally {
+    $stream.Dispose()
+  }
+}
+
+function Write-Log([string]$text) {
+  try {
+    if ([string]::IsNullOrEmpty($script:logPath)) {
+      $script:logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'screensnap-widget.log'
+      try { [System.IO.File]::WriteAllText($script:logPath, '') } catch { }
+    }
+    $line = ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss.fff'), $text) + [Environment]::NewLine
+    [System.IO.File]::AppendAllText($script:logPath, $line, [System.Text.UTF8Encoding]::new($false))
+  } catch { }
+}
+
+function Send-PanelMessage($message) {
+  $json = $null
+  try { $json = $message | ConvertTo-Json -Compress -Depth 8 } catch { return }
+  if (-not $script:pageReady) {
+    if ($null -eq $script:pendingPanelMessages) {
+      $script:pendingPanelMessages = New-Object System.Collections.Generic.List[string]
+    }
+    [void]$script:pendingPanelMessages.Add($json)
+    return
+  }
+  if ($null -eq $script:web) { return }
+  $core = $script:web.CoreWebView2
+  if ($null -eq $core) { return }
+  try { $core.PostWebMessageAsJson($json) } catch {
+    Write-Log ('panel message failed: ' + $_.Exception.Message)
+  }
+}
+
+function Flush-PanelMessages {
+  if (-not $script:pageReady) { return }
+  if ($null -eq $script:pendingPanelMessages -or $script:pendingPanelMessages.Count -eq 0) { return }
+  if ($null -eq $script:web) { return }
+  $core = $script:web.CoreWebView2
+  if ($null -eq $core) { return }
+  foreach ($json in $script:pendingPanelMessages) {
+    try { $core.PostWebMessageAsJson($json) } catch {
+      Write-Log ('panel flush failed: ' + $_.Exception.Message)
+    }
+  }
+  $script:pendingPanelMessages.Clear()
+}
+
+function Send-PanelInit {
+  if (-not $script:pageReady) { return }
+  $screen = [System.Windows.Forms.Screen]::FromPoint(
+    [System.Drawing.Point]::new(($script:ballX + 42), ($script:ballY + 42))
+  )
+  $area = $screen.WorkingArea
+  Send-PanelMessage @{
+    type = 'init'
+    maxHeight = [int]($area.Height * 0.7)
+    maxWidth = [int]($area.Width * 0.8)
+  }
+}
+
+function Send-PanelCapture {
+  if (-not $script:pageReady) { return }
+  if ($script:capturePublished) { return }
+  if ([string]::IsNullOrEmpty($script:captureImageBase64)) { return }
+  [Console]::Error.WriteLine('panel-capture len=' + $script:captureImageBase64.Length)
+  Write-Log ('capture->panel len=' + $script:captureImageBase64.Length)
+  Send-PanelMessage @{
+    type = 'capture'
+    imageBase64 = $script:captureImageBase64
+    width = $script:panelImageWidth
+    height = $script:panelImageHeight
+  }
+  $script:capturePublished = $true
+}
+
+function Send-Capture([string]$note) {
+  if ([string]::IsNullOrEmpty($script:captureImageBase64)) {
+    Send-PanelMessage @{ type = 'analysis-error'; message = '截图数据为空，请重新框选。' }
+    return
+  }
+  $payload = @{
+    type = 'capture'
+    imageBase64 = $script:captureImageBase64
+    note = $note
+  } | ConvertTo-Json -Compress
+  [Console]::Out.WriteLine($payload)
+  [Console]::Out.Flush()
+}
+
+function Set-PanelHeight([int]$value) {
+  if ($null -eq $script:panelForm -or -not $script:panelVisible) { return }
+  $screen = [System.Windows.Forms.Screen]::FromPoint(
+    [System.Drawing.Point]::new(($script:ballX + 42), ($script:ballY + 42))
+  )
+  $area = $screen.WorkingArea
+  $max = [Math]::Max(200, [int]($area.Height * 0.7))
+  $target = [Math]::Max(200, [Math]::Min($value, $max))
+  if ($script:panelAnimating) {
+    $script:pendingPanelHeight = $target
+    return
+  }
+  if ([Math]::Abs($script:panelForm.Height - $target) -le 2) { return }
+  $bottomLimit = $area.Bottom - 8
+  $top = $script:panelY
+  if (($top + $target) -gt $bottomLimit) { $top = $bottomLimit - $target }
+  if ($top -lt $area.Top + 8) { $top = $area.Top + 8 }
+  $script:panelY = $top
+  $script:panelForm.Bounds = [System.Drawing.Rectangle]::new(
+    $script:panelX,
+    $top,
+    $script:panelWidth,
+    $target
+  )
+  Set-PanelRegion
+  Update-Shadow $script:panelWidth $target
+}
+
+function Handle-PanelMessage([string]$json) {
+  $message = $null
+  try { $message = $json | ConvertFrom-Json } catch { return }
+  if ($null -eq $message -or $null -eq $message.type) { return }
+  [Console]::Error.WriteLine('panel-msg ' + [string]$message.type)
+  Write-Log ('panel-msg ' + [string]$message.type)
+  switch ([string]$message.type) {
+    'ready' {
+      $script:pageReady = $true
+      Send-PanelInit
+      Send-PanelCapture
+      Flush-PanelMessages
+    }
+    'capture-ack' { [Console]::Error.WriteLine('panel-capture-ack len=' + [string]$message.length) }
+    'height' {
+      if ($null -ne $message.height) { Set-PanelHeight ([int]$message.height) }
+    }
+    'send' {
+      Send-Capture ([string]$message.note)
+    }
+    'drag' {
+      if ($null -ne $script:panelForm) {
+        [ScreenSnapNative]::ReleaseCapture() | Out-Null
+        [ScreenSnapNative]::SendMessage($script:panelForm.Handle, 0xA1, [IntPtr]::new(2), [IntPtr]::Zero) | Out-Null
+      }
+    }
+    'minimize' { Collapse-Panel }
+    'cancel' { Collapse-Panel }
+    'rescan' {
+      Collapse-Panel -Immediate
+      Start-Capture
+    }
+    'close' { Collapse-Panel -Immediate }
+  }
+}
+
+function Handle-HostLine([string]$json) {
+  $message = $null
+  try { $message = $json | ConvertFrom-Json } catch { return }
+  if ($null -eq $message -or $null -eq $message.type) { return }
+  Write-Log ('host-line ' + [string]$message.type)
+  switch ([string]$message.type) {
+    'analysis-delta' { Send-PanelMessage @{ type = 'analysis-delta'; text = [string]$message.text } }
+    'analysis-replace' { Send-PanelMessage @{ type = 'analysis-replace'; text = [string]$message.text } }
+    'analysis-done' { Send-PanelMessage @{ type = 'analysis-done' } }
+    'analysis-error' { Send-PanelMessage @{ type = 'analysis-error'; message = [string]$message.message } }
+  }
+}
+
+function Start-HostReader {
+  if ($null -ne $script:hostReader) { return }
+  $script:hostQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+  $readerScript = {
+    param($queue)
+    $stream = $null
+    try {
+      $stream = [Console]::OpenStandardInput()
+      $textReader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding($false)))
+      while ($true) {
+        $line = $null
+        try { $line = $textReader.ReadLine() } catch { break }
+        if ($null -eq $line) { break }
+        if ($line.Trim().Length -gt 0) { [void]$queue.Enqueue($line) }
+      }
+    } catch { } finally {
+      if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+    }
+  }
+  $reader = [powershell]::Create()
+  $null = $reader.AddScript($readerScript).AddArgument($script:hostQueue)
+  $script:hostReader = $reader
+  $null = $reader.BeginInvoke()
+  $timer = [System.Windows.Forms.Timer]::new()
+  $timer.Interval = 80
+  $script:hostTimer = $timer
+  $timer.Add_Tick({
+    if ($null -eq $script:hostQueue) { return }
+    $line = $null
+    while ($script:hostQueue.TryDequeue([ref]$line)) {
+      if ($null -ne $line) { Handle-HostLine $line }
+    }
+  })
+  $timer.Start()
+}
+
+function Close-Widget {
+  Write-Log 'Close-Widget'
+  try { Stop-PanelReveal } catch { }
+  try { Stop-PanelAnimation } catch { }
+  try { if ($null -ne $script:panelForm) { $script:panelForm.Hide() } } catch { }
+  try { Hide-Shadow } catch { }
+  try { Hide-Ball } catch { }
+  try { [System.Windows.Forms.Application]::DoEvents() } catch { }
+  [System.Windows.Forms.Application]::Exit()
+  [Environment]::Exit(0)
+}
+
+function Expand-Panel([System.Drawing.Image]$image, [string]$imageBase64) {
+  if ($null -eq $script:panelForm) { return }
+  Stop-PanelAnimation
+  if ($null -ne $script:previewImage) { $script:previewImage.Dispose() }
+  $script:previewImage = $image
+  if ([string]::IsNullOrEmpty($imageBase64) -or $imageBase64 -eq 'selftest') {
+    $imageBase64 = Convert-ImageToBase64 $image
+  }
+  $script:captureImageBase64 = $imageBase64
+  Write-Log ('expand image=' + $image.Width + 'x' + $image.Height + ' b64=' + $script:captureImageBase64.Length)
+  $script:panelImageWidth = $image.Width
+  $script:panelImageHeight = $image.Height
+  $script:capturePublished = $false
+
+  $screen = [System.Windows.Forms.Screen]::FromPoint(
+    [System.Drawing.Point]::new(($script:ballX + 42), ($script:ballY + 42))
+  )
+  $area = $screen.WorkingArea
+  $maxPanelWidth = [Math]::Max(400, [int]($area.Width * 0.8))
+  $panelWidth = [Math]::Min($maxPanelWidth, [Math]::Max(400, ($image.Width + 48)))
+  $script:panelWidth = $panelWidth
+
+  $panelX = $script:ballX + $script:ballSize - $panelWidth
+  if ($panelX -lt $area.Left + 8) {
+    $panelX = $area.Left + 8
+    $script:ballX = $panelX + $panelWidth - $script:ballSize
+    Update-Ball
+  }
+  if (($panelX + $panelWidth) -gt $area.Right - 8) {
+    $panelX = $area.Right - 8 - $panelWidth
+    $script:ballX = $panelX + $panelWidth - $script:ballSize
+    Update-Ball
+  }
+
+  $initialHeight = [Math]::Min([int]($area.Height * 0.7), 560)
+  $panelY = $script:ballY + 82
+  if (($panelY + $initialHeight) -gt $area.Bottom - 8) {
+    $panelY = $area.Bottom - 8 - $initialHeight
+    $script:ballY = $panelY - 82
+    if ($script:ballY -lt $area.Top + 8) {
+      $script:ballY = $area.Top + 8
+      $panelY = $script:ballY + 82
+    }
+    Update-Ball
+  }
+  if ($panelY -lt $area.Top + 8) { $panelY = $area.Top + 8 }
+
+  $script:panelX = $panelX
+  $script:panelY = $panelY
+  $script:panelHeight = $initialHeight
+  $script:pendingPanelHeight = 0
+  $script:panelForm.Bounds = [System.Drawing.Rectangle]::new($panelX, $panelY, $panelWidth, 64)
+  Set-PanelRegion
+  Show-Shadow
+  if (-not $script:panelForm.Visible) { $script:panelForm.Show() }
+  $script:panelForm.TopMost = $true
+  $script:panelVisible = $true
+  $script:ballForm.BringToFront()
+
+  Start-PanelAnimation 64 $initialHeight {
+    Set-PanelRegion
+    if ($script:pendingPanelHeight -gt 0) {
+      $pending = $script:pendingPanelHeight
+      $script:pendingPanelHeight = 0
+      Set-PanelHeight $pending
+    }
+    Send-PanelCapture
+    $script:ballForm.BringToFront()
+  }
+  Send-PanelCapture
+
+  Stop-PanelReveal
+  $reveal = [System.Windows.Forms.Timer]::new()
+  $reveal.Interval = 400
+  $script:panelRevealTimer = $reveal
+  $reveal.Add_Tick({
+    Stop-PanelReveal
+    if ($script:panelVisible -and $null -ne $script:panelForm) {
+      Send-PanelCapture
+      $script:ballForm.BringToFront()
+    }
+  })
+  $reveal.Start()
+}
+
+function Collapse-Panel([switch]$Immediate) {
+  if ($null -eq $script:panelForm) { return }
+  Stop-PanelReveal
+  Stop-PanelAnimation
+  Hide-PanelControls
+  Clear-PreviewData
+  $script:panelVisible = $false
+  if ($Immediate) {
+    $script:panelForm.Hide()
+    Hide-Shadow
+    return
+  }
+  $from = $script:panelForm.Height
+  Start-PanelAnimation $from 64 {
+    $script:panelForm.Hide()
+    Hide-Shadow
+    if (-not [string]::IsNullOrEmpty($script:toastAfterCollapse)) {
+      Show-Toast $script:toastAfterCollapse
+      $script:toastAfterCollapse = ''
+    }
+  }
+}
+
+function Close-Frozen {
+  if ($null -ne $script:hud) {
+    try {
+      $script:hud.Hide()
+      $script:hud.Dispose()
+    } catch { }
+    $script:hud = $null
+  }
+  if ($null -ne $script:frozen) {
+    try {
+      $script:frozen.Hide()
+      $script:frozen.Dispose()
+    } catch { }
+    $script:frozen = $null
+  }
+  if ($null -ne $script:frozenImage) {
+    $script:frozenImage.Dispose()
+    $script:frozenImage = $null
+  }
+}
+
+function New-DimmedBitmap([System.Drawing.Bitmap]$source) {
+  $copy = [System.Drawing.Bitmap]::new(
+    $source.Width,
+    $source.Height,
+    [System.Drawing.Imaging.PixelFormat]::Format32bppPArgb
+  )
+  $graphics = [System.Drawing.Graphics]::FromImage($copy)
+  try {
+    $graphics.DrawImageUnscaled($source, 0, 0)
+    $shade = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(42, 0, 0, 0))
+    try {
+      $graphics.FillRectangle($shade, 0, 0, $copy.Width, $copy.Height)
+    } finally {
+      $shade.Dispose()
+    }
+  } finally {
+    $graphics.Dispose()
+  }
+  return $copy
+}
+
+function Update-SelectionOverlay([System.Drawing.Rectangle]$rect) {
+  if ($null -eq $script:hud -or $null -eq $script:virtual) { return }
+  if ($rect.Width -lt 1 -or $rect.Height -lt 1) { return }
+
+  $margin = 3
+  $width = $rect.Width + ($margin * 2)
+  $height = $rect.Height + ($margin * 2)
+  $bitmap = [System.Drawing.Bitmap]::new(
+    $width,
+    $height,
+    [System.Drawing.Imaging.PixelFormat]::Format32bppPArgb
+  )
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  try {
+    $graphics.Clear([System.Drawing.Color]::Transparent)
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $pen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(255, 0, 170, 255), 2)
+    try {
+      $graphics.DrawRectangle($pen, 1, 1, ($width - 3), ($height - 3))
+    } finally {
+      $pen.Dispose()
+    }
+  } finally {
+    $graphics.Dispose()
+  }
+
+  $x = $script:virtual.Left + $rect.X - $margin
+  $y = $script:virtual.Top + $rect.Y - $margin
+  try {
+    [ScreenSnapNative]::Apply($script:hud.Handle, $bitmap, $x, $y) | Out-Null
+  } finally {
+    $bitmap.Dispose()
+  }
+}
+
+function Show-Frozen([System.Drawing.Bitmap]$bitmap) {
+  $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $script:virtual = $virtual
+  $script:captureBitmap = $bitmap
+  $script:frozenImage = New-DimmedBitmap $bitmap
+  $script:selecting = $false
+  $script:selectStart = $null
+
+  $frozen = [ScreenSnapFrozenForm]::new()
+  $frozen.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+  $frozen.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $frozen.Location = $virtual.Location
+  $frozen.Size = $bitmap.Size
+  $frozen.TopMost = $true
+  $frozen.ShowInTaskbar = $false
+  $frozen.Cursor = [System.Windows.Forms.Cursors]::Cross
+  $frozen.KeyPreview = $true
+  $frozen.BackColor = [System.Drawing.Color]::Black
+  $script:frozen = $frozen
+
+  $frozen.Add_Paint({
+    param($sender, $e)
+    if ($null -ne $script:frozenImage) {
+      $e.Graphics.DrawImageUnscaled($script:frozenImage, 0, 0)
+    }
+  })
+
+  $frozen.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $script:selectStart = [System.Drawing.Point]::new($e.X, $e.Y)
+    $script:selecting = $true
+    if ($null -ne $script:hud) { $script:hud.Hide() }
+    try { $script:frozen.Capture = $true } catch { }
+  })
+
+  $frozen.Add_MouseMove({
+    param($sender, $e)
+    if (-not $script:selecting -or $null -eq $script:selectStart) { return }
+    $x = [Math]::Min($script:selectStart.X, $e.X)
+    $y = [Math]::Min($script:selectStart.Y, $e.Y)
+    $w = [Math]::Abs($e.X - $script:selectStart.X)
+    $h = [Math]::Abs($e.Y - $script:selectStart.Y)
+    if ($w -lt 1 -or $h -lt 1) { return }
+    if ($null -ne $script:hud -and -not $script:hud.Visible) { $script:hud.Show() }
+    Update-SelectionOverlay ([System.Drawing.Rectangle]::new($x, $y, $w, $h))
+  })
+
+  $frozen.Add_MouseUp({
+    param($sender, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    if (-not $script:selecting) { return }
+    $script:selecting = $false
+    try { $script:frozen.Capture = $false } catch { }
+    $rect = [System.Drawing.Rectangle]::new(
+      [Math]::Min($script:selectStart.X, $e.X),
+      [Math]::Min($script:selectStart.Y, $e.Y),
+      [Math]::Abs($e.X - $script:selectStart.X),
+      [Math]::Abs($e.Y - $script:selectStart.Y)
+    )
+    if ($rect.Width -ge 8 -and $rect.Height -ge 8) {
+      Close-Frozen
+      Complete-Capture $rect
+    } else {
+      Cancel-Capture
+    }
+  })
+
+  $frozen.Add_KeyDown({
+    param($sender, $e)
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+      Cancel-Capture
+    }
+  })
+
+  $frozen.Show()
+  $frozen.Activate()
+  $frozen.Focus()
+
+  $hud = [ScreenSnapHudForm]::new()
+  $hud.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+  $hud.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $hud.Location = [System.Drawing.Point]::new(0, 0)
+  $hud.Size = [System.Drawing.Size]::new(1, 1)
+  $hud.TopMost = $true
+  $hud.ShowInTaskbar = $false
+  $script:hud = $hud
+  $hud.Show()
+  $frozen.Activate()
+  $frozen.Focus()
+}
+
+function Complete-Capture([System.Drawing.Rectangle]$rect) {
+  $script:busy = $false
+  $bitmap = $script:captureBitmap
+  $script:captureBitmap = $null
+  if ($null -eq $bitmap) {
+    Show-Ball
+    return
+  }
+
+  $crop = $null
+  $scaled = $null
+  $previewImage = $null
+  try {
+    $rect = [System.Drawing.Rectangle]::Intersect($rect, [System.Drawing.Rectangle]::new(0, 0, $bitmap.Width, $bitmap.Height))
+    if ($rect.Width -lt 4 -or $rect.Height -lt 4) {
+      Show-Ball
+      return
+    }
+
+    $crop = $bitmap.Clone($rect, $bitmap.PixelFormat)
+    $bitmap.Dispose()
+    $bitmap = $null
+
+    $scale = [Math]::Min(1.0, [Math]::Min((1280.0 / $crop.Width), (960.0 / $crop.Height)))
+    $target = $crop
+    if ($scale -lt 1.0) {
+      $targetWidth = [Math]::Max(1, [int]($crop.Width * $scale))
+      $targetHeight = [Math]::Max(1, [int]($crop.Height * $scale))
+      $scaled = [System.Drawing.Bitmap]::new($targetWidth, $targetHeight)
+      $graphics = [System.Drawing.Graphics]::FromImage($scaled)
+      try {
+        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $graphics.DrawImage($crop, 0, 0, $targetWidth, $targetHeight)
+      } finally {
+        $graphics.Dispose()
+      }
+      $target = $scaled
+    }
+
+    $stream = [System.IO.MemoryStream]::new()
+    $target.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bytes = $stream.ToArray()
+    $stream.Dispose()
+    if ($bytes.Length -gt (6 * 1024 * 1024)) {
+      throw '截图超过 6 MB，请框选更小的区域'
+    }
+
+    $imageBase64 = [System.Convert]::ToBase64String($bytes)
+
+    $imageStream = [System.IO.MemoryStream]::new($bytes, $false)
+    $tempImage = [System.Drawing.Image]::FromStream($imageStream)
+    $previewImage = [System.Drawing.Bitmap]::new($tempImage)
+    $tempImage.Dispose()
+    $imageStream.Dispose()
+
+    Show-Ball
+    Expand-Panel $previewImage $imageBase64
+    $previewImage = $null
+  } catch {
+    if ($null -ne $previewImage) { $previewImage.Dispose() }
+    [System.Windows.Forms.MessageBox]::Show(
+      ('无法准备截图：' + $_.Exception.Message),
+      '看图助手',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    ) | Out-Null
+    Show-Ball
+  } finally {
+    if ($null -ne $crop) { $crop.Dispose() }
+    if ($null -ne $scaled) { $scaled.Dispose() }
+    if ($null -ne $bitmap) { $bitmap.Dispose() }
+  }
+}
+
+function Cancel-Capture {
+  $script:selecting = $false
+  Close-Frozen
+  if ($null -ne $script:captureBitmap) {
+    $script:captureBitmap.Dispose()
+    $script:captureBitmap = $null
+  }
+  $script:busy = $false
+  Show-Ball
+}
+
+function Start-Capture {
+  if ($script:busy) { return }
+  $script:busy = $true
+  Stop-PanelReveal
+  Hide-Shadow
+  Hide-Ball
+  if ($null -ne $script:panelForm) { $script:panelForm.Hide() }
+  $script:panelVisible = $false
+  Start-Sleep -Milliseconds 150
+
+  $bitmap = $null
+  try {
+    $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+    $bitmap = [System.Drawing.Bitmap]::new($virtual.Width, $virtual.Height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+      $graphics.CopyFromScreen($virtual.Left, $virtual.Top, 0, 0, $bitmap.Size)
+    } finally {
+      $graphics.Dispose()
+    }
+  } catch {
+    if ($null -ne $bitmap) { $bitmap.Dispose() }
+    $bitmap = $null
+  }
+
+  if ($null -eq $bitmap) {
+    [System.Windows.Forms.MessageBox]::Show(
+      '无法抓取屏幕内容。',
+      '看图助手',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    ) | Out-Null
+    $script:busy = $false
+    Show-Ball
+    return
+  }
+
+  Show-Frozen $bitmap
+}
+
+function Toggle-Ball {
+  if ($script:panelAnimating) { return }
+  if ($null -ne $script:panelForm -and $script:panelForm.Visible) {
+    Collapse-Panel
+  } else {
+    Start-Capture
+  }
+}
+
+try {
+  [System.Windows.Forms.Application]::EnableVisualStyles()
+  [System.Windows.Forms.Application]::SetUnhandledExceptionMode(
+    [System.Windows.Forms.UnhandledExceptionMode]::CatchException
+  )
+  [System.Windows.Forms.Application]::add_ThreadException({
+    param($sender, $e)
+    [Console]::Error.WriteLine($e.Exception.ToString())
+    [System.Windows.Forms.MessageBox]::Show(
+      ('看图助手出错：' + $e.Exception.Message),
+      '看图助手',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+  })
+
+  $workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $script:ballX = $workingArea.Right - 96 - $script:ballSize
+  $script:ballY = $workingArea.Top + 88
+  if ($script:ballX -lt $workingArea.Left + 8) { $script:ballX = $workingArea.Left + 8 }
+  if ($script:ballY + $script:ballSize -gt $workingArea.Bottom - 8) {
+    $script:ballY = $workingArea.Bottom - 8 - $script:ballSize
+  }
+
+  $ballForm = [ScreenSnapBallForm]::new()
+  $ballForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+  $ballForm.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $ballForm.Size = [System.Drawing.Size]::new($script:ballWindow, $script:ballWindowHeight)
+  $ballForm.TopMost = $true
+  $ballForm.ShowInTaskbar = $false
+  $ballForm.Cursor = [System.Windows.Forms.Cursors]::Hand
+  $script:ballForm = $ballForm
+
+  $ballForm.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    if ($e.X -lt $script:ballMargin -or $e.X -gt ($script:ballMargin + $script:ballSize) -or
+        $e.Y -lt $script:ballMargin -or $e.Y -gt ($script:ballMargin + $script:ballSize)) { return }
+    $script:ballDrag = @{
+      start = [System.Windows.Forms.Cursor]::Position
+      x = $script:ballX
+      y = $script:ballY
+      moved = $false
+    }
+    try { $script:ballForm.Capture = $true } catch { }
+  })
+
+  $ballForm.Add_MouseMove({
+    param($sender, $e)
+    if ($null -eq $script:ballDrag) { return }
+    $position = [System.Windows.Forms.Cursor]::Position
+    $dx = $position.X - $script:ballDrag.start.X
+    $dy = $position.Y - $script:ballDrag.start.Y
+    if (-not $script:ballDrag.moved -and ([Math]::Abs($dx) + [Math]::Abs($dy)) -lt 4) { return }
+    $script:ballDrag.moved = $true
+    $screen = [System.Windows.Forms.Screen]::FromPoint($position)
+    $area = $screen.WorkingArea
+    $newX = $script:ballDrag.x + $dx
+    $newY = $script:ballDrag.y + $dy
+    if ($newX -lt $area.Left + 8) { $newX = $area.Left + 8 }
+    if ($newY -lt $area.Top + 8) { $newY = $area.Top + 8 }
+    if ($newX + $script:ballSize -gt $area.Right - 8) { $newX = $area.Right - 8 - $script:ballSize }
+    if ($newY + $script:ballSize -gt $area.Bottom - 8) { $newY = $area.Bottom - 8 - $script:ballSize }
+    $script:ballX = $newX
+    $script:ballY = $newY
+    Update-Ball
+    Move-PanelToBall
+  })
+
+  $ballForm.Add_MouseUp({
+    param($sender, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $drag = $script:ballDrag
+    $script:ballDrag = $null
+    try { $script:ballForm.Capture = $false } catch { }
+    if ($null -eq $drag) { return }
+    if (-not $drag.moved) {
+      Toggle-Ball
+    }
+  })
+
+  $ballForm.Add_MouseEnter({
+    $script:ballHover = $true
+    if ($null -eq $script:ballDrag) { Update-Ball }
+  })
+  $ballForm.Add_MouseLeave({
+    $script:ballHover = $false
+    if ($null -eq $script:ballDrag) { Update-Ball }
+  })
+
+
+  $script:tooltip = [System.Windows.Forms.ToolTip]::new()
+  $script:tooltip.SetToolTip($ballForm, '点击框选屏幕区域；点我收起面板')
+
+  $panelForm = [ScreenSnapMainForm]::new()
+  $panelForm.Text = '看图助手'
+  $panelForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+  $panelForm.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $panelForm.Size = [System.Drawing.Size]::new($script:panelWidth, $script:panelHeight)
+  $panelForm.TopMost = $true
+  $panelForm.ShowInTaskbar = $false
+  $panelForm.KeyPreview = $true
+  $panelForm.BackColor = [System.Drawing.Color]::FromArgb(11, 14, 20)
+  $script:panelForm = $panelForm
+
+  $panelForm.Add_KeyDown({
+    param($sender, $e)
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+      $e.SuppressKeyPress = $true
+      Collapse-Panel
+    }
+  })
+
+  $panelForm.Add_FormClosing({
+    Stop-PanelAnimation
+  })
+
+  $panelForm.Add_LocationChanged({
+    $script:panelX = $panelForm.Left
+    $script:panelY = $panelForm.Top
+    if ($script:panelVisible -and $null -ne $script:shadowForm -and $script:shadowForm.Visible) {
+      Update-Shadow $script:panelWidth $panelForm.Height
+    }
+  })
+
+  $script:panelUri = [System.Uri]::new((Join-Path $PSScriptRoot 'panel.html')).AbsoluteUri
+
+  $web = [Microsoft.Web.WebView2.WinForms.WebView2]::new()
+  $web.Dock = [System.Windows.Forms.DockStyle]::Fill
+  $web.DefaultBackgroundColor = [System.Drawing.Color]::Transparent
+  $panelForm.Controls.Add($web)
+  $script:web = $web
+
+  $web.Add_CoreWebView2InitializationCompleted({
+    param($sender, $e)
+    if (-not $e.IsSuccess) {
+      Write-Log ('webview init failed: ' + $e.InitializationException)
+      [Console]::Error.WriteLine('WebView2 initialization failed: ' + $e.InitializationException)
+      return
+    }
+    $core = $sender.CoreWebView2
+    $script:webCore = $core
+    $core.Settings.AreDefaultContextMenusEnabled = $false
+    $core.Settings.AreDevToolsEnabled = $false
+    $core.Settings.IsStatusBarEnabled = $false
+    $core.Settings.IsZoomControlEnabled = $false
+    $core.Settings.IsPinchZoomEnabled = $false
+    $core.Settings.AreBrowserAcceleratorKeysEnabled = $false
+    $core.Add_WebMessageReceived({
+      param($sender, $eventArgs)
+      try {
+        [System.IO.File]::AppendAllText(
+          (Join-Path ([System.IO.Path]::GetTempPath()) 'screensnap-msg.log'),
+          [string]$eventArgs.WebMessageAsJson + [Environment]::NewLine,
+          [System.Text.UTF8Encoding]::new($false))
+      } catch { }
+      Handle-PanelMessage ([string]$eventArgs.WebMessageAsJson)
+    })
+    $core.Navigate($script:panelUri)
+    Write-Log ('webview init ok, navigate ' + $script:panelUri)
+  })
+
+  $panelForm.Add_Shown({
+    if ($script:webStarted) { return }
+    $script:webStarted = $true
+    try {
+      $userDataFolder = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ScreenSnap\WebView2'
+      New-Item -ItemType Directory -Force -Path $userDataFolder | Out-Null
+      $environment = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $userDataFolder, $null).GetAwaiter().GetResult()
+      $script:webEnvironment = $environment
+      $null = $script:web.Handle
+      $script:web.EnsureCoreWebView2Async($environment)
+      Write-Log 'webview ensure called'
+    } catch {
+      Write-Log ('WebView2 startup failed: ' + $_.Exception.Message)
+      [Console]::Error.WriteLine('WebView2 startup failed: ' + $_.Exception.ToString())
+    }
+  })
+  $panelForm.Hide()
+  $null = $ballForm.Handle
+  Update-Ball
+  $ballForm.Show()
+  $ballForm.TopMost = $true
+  $ballForm.BringToFront()
+
+  [Console]::Out.WriteLine('{"type":"ready"}')
+  [Console]::Out.Flush()
+  Write-Log 'widget ready printed'
+
+  Start-HostReader
+
+  if ($SelfTest) {
+    $testBitmap = [System.Drawing.Bitmap]::new(900, 260)
+    $testGraphics = [System.Drawing.Graphics]::FromImage($testBitmap)
+    try {
+      $testGraphics.Clear([System.Drawing.Color]::White)
+      $testFont = [System.Drawing.Font]::new('Consolas', [single]14)
+      try {
+        $testBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(200, 40, 40))
+        try {
+          $testGraphics.DrawString('TypeError: cannot read property x of undefined', $testFont, $testBrush, 16, 24)
+          $testGraphics.DrawString('at main.js:42:13', $testFont, $testBrush, 16, 70)
+        } finally {
+          $testBrush.Dispose()
+        }
+      } finally {
+        $testFont.Dispose()
+      }
+    } finally {
+      $testGraphics.Dispose()
+    }
+    $script:selftestImage = $testBitmap
+    $script:selftestTimer = [System.Windows.Forms.Timer]::new()
+    $script:selftestTimer.Interval = 600
+    $script:selftestTimer.Add_Tick({
+      $script:selftestTimer.Stop()
+      $script:selftestTimer.Dispose()
+      Expand-Panel $script:selftestImage 'selftest'
+    })
+    $script:selftestTimer.Start()
+
+    $script:selftestCapture = [System.Windows.Forms.Timer]::new()
+    $script:selftestCapture.Interval = 2800
+    $script:selftestCapture.Add_Tick({
+      $script:selftestCapture.Stop()
+      $script:selftestCapture.Dispose()
+      $path = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'screensnap-selftest.png')
+      $stream = $null
+      try {
+        if ($null -ne $script:web -and $null -ne $script:web.CoreWebView2) {
+          $stream = [System.IO.File]::Create($path)
+          $format = [Microsoft.Web.WebView2.Core.CoreWebView2CapturePreviewImageFormat]::Png
+          $task = $script:web.CoreWebView2.CapturePreviewAsync($format, $stream)
+          $closeTimer = [System.Windows.Forms.Timer]::new()
+          $script:selftestClose = $closeTimer
+          $closeTimer.Interval = 1500
+          $closeTimer.Add_Tick({
+            $script:selftestClose.Stop()
+            $script:selftestClose.Dispose()
+            try { $stream.Dispose() } catch { }
+            try {
+              [Console]::Out.WriteLine((@{ type = 'selftest'; path = $path } | ConvertTo-Json -Compress))
+              [Console]::Out.Flush()
+            } catch { }
+            Close-Widget
+          })
+          $closeTimer.Start()
+        } else {
+          Close-Widget
+        }
+      } catch {
+        if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+        Close-Widget
+      }
+    })
+    $script:selftestCapture.Start()
+  }
+
+
+  if ($ParentPid -gt 0) {
+    $script:parentTimer = [System.Windows.Forms.Timer]::new()
+    $script:parentTimer.Interval = 2000
+    $script:parentTimer.Add_Tick({
+      if ($null -eq (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue)) {
+        $script:parentTimer.Stop()
+        Close-Widget
+      }
+    })
+    $script:parentTimer.Start()
+  }
+
+  [System.Windows.Forms.Application]::Run($ballForm)
+} catch {
+  [Console]::Error.WriteLine($_.Exception.ToString())
+  exit 1
+}

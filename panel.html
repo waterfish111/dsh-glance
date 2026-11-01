@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>看图助手</title>
+<style>
+  :root {
+    --bg: rgba(16, 19, 27, 0.82);
+    --bg-2: rgba(11, 14, 20, 0.72);
+    --text: #e9eef7;
+    --muted: #939db0;
+    --dim: #6d778a;
+    --accent: #4c8dff;
+    --accent-hover: #66a0ff;
+    --stroke: rgba(255, 255, 255, 0.075);
+    --code-bg: rgba(255, 255, 255, 0.075);
+    --radius: 16px;
+    --max-height: 70vh;
+    --max-width: 80vw;
+    --sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "Cascadia Code", "Consolas", "SF Mono", "JetBrains Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: transparent;
+    overflow: hidden;
+  }
+
+  body {
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13.5px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: var(--max-width);
+    height: 100%;
+    max-height: var(--max-height);
+    margin: 0 auto;
+    overflow: hidden;
+    border-radius: var(--radius);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0) 26%),
+      var(--bg);
+    -webkit-backdrop-filter: blur(26px) saturate(140%);
+    backdrop-filter: blur(26px) saturate(140%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.07),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  }
+
+  /* ---------- title bar ---------- */
+
+  .titlebar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 62px;
+    padding: 0 16px 0 24px;
+    user-select: none;
+    cursor: default;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .brand-dot { display: none; }
+
+  .brand-name {
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    color: var(--text);
+  }
+
+  .title-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--muted);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  .icon-btn:hover { background: rgba(255, 255, 255, 0.12); color: var(--text); }
+  .icon-btn:active { background: rgba(255, 255, 255, 0.18); }
+  .icon-btn.close:hover { background: rgba(232, 74, 90, 0.9); color: #fff; }
+  .icon-btn svg { width: 17px; height: 17px; }
+
+  /* ---------- content ---------- */
+
+  .content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    margin: 0 18px 12px;
+    padding: 20px 22px 10px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.042);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  }
+
+  .content::-webkit-scrollbar { width: 7px; height: 7px; }
+  .content::-webkit-scrollbar-track { background: transparent; }
+  .content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+    background-clip: padding-box;
+  }
+
+  .content-inner { display: block; }
+
+  .shot {
+    margin: 0 0 16px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #0a0c12;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.075), 0 6px 20px rgba(0, 0, 0, 0.28);
+  }
+
+  .shot img {
+    display: block;
+    max-width: 100%;
+    max-height: 300px;
+    margin: 0 auto;
+    object-fit: contain;
+    background: #0a0c12;
+  }
+
+  .analysis-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 24px;
+    margin-bottom: 10px;
+  }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--text);
+    letter-spacing: 0.01em;
+  }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    color: var(--dim);
+  }
+  .status-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--dim);
+    flex: 0 0 auto;
+  }
+  .status.busy { color: var(--muted); }
+  .status.busy .status-dot { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+  .status.done .status-dot { background: #3ecf8e; }
+  .status.error { color: #ff8d9c; }
+  .status.error .status-dot { background: #ff5f75; }
+  .hint { color: var(--dim); white-space: nowrap; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+
+  .analysis-body {
+    font-size: 14px;
+    line-height: 1.75;
+    color: #dbe2ee;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .analysis-body .empty { color: var(--dim); }
+  .analysis-body h4 {
+    margin: 16px 0 8px;
+    font-size: 15.5px;
+    font-weight: 650;
+    color: var(--text);
+  }
+  .analysis-body p { margin: 0 0 10px; }
+  .analysis-body ul { margin: 0 0 10px; padding-left: 20px; }
+  .analysis-body li { margin: 3px 0; }
+  .analysis-body strong { color: #fff; font-weight: 650; }
+
+  .analysis-body code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    padding: 1px 6px;
+    border-radius: 5px;
+    background: var(--code-bg);
+    color: #d7e3ff;
+    word-break: break-all;
+  }
+
+  .analysis-body code.path {
+    color: #cfe0ff;
+    padding: 2px 11px;
+    border-radius: 999px;
+    background: rgba(76, 141, 255, 0.17);
+    box-shadow: inset 0 0 0 1px rgba(76, 141, 255, 0.24);
+  }
+
+  .analysis-body pre {
+    margin: 8px 0 10px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: rgba(0, 0, 0, 0.32);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  }
+
+  .analysis-body pre code {
+    display: block;
+    padding: 0;
+    background: transparent;
+    color: #cfe0ff;
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre;
+    word-break: normal;
+  }
+
+  .analysis-body pre::-webkit-scrollbar { height: 8px; }
+  .analysis-body pre::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+  }
+
+  .analysis-body .error-text { color: #ff9aa8; }
+
+  /* ---------- composer ---------- */
+
+  .composer {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    margin: 0 18px 18px;
+    padding: 8px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.045);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
+  }
+
+  .input-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    transition: box-shadow 0.15s ease, background-color 0.15s ease;
+  }
+
+  .input-wrap:focus-within {
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: 0 0 0 1px rgba(76, 141, 255, 0.5);
+  }
+
+  #note {
+    display: block;
+    width: 100%;
+    max-height: 122px;
+    padding: 12px 14px;
+    border: 0;
+    border-radius: 12px;
+    outline: none;
+    resize: none;
+    overflow-y: hidden;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    line-height: 1.5;
+    scrollbar-width: none;
+  }
+
+  #note::placeholder { color: var(--dim); }
+  #note::-webkit-scrollbar { display: none; }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #cancel { display: none; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 44px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 12px;
+    font-family: var(--sans);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.08s ease, opacity 0.15s ease;
+  }
+
+  .btn:active { transform: translateY(0.5px); }
+
+  .btn.ghost {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: var(--text);
+  }
+  .btn.ghost:hover { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.3); }
+  .btn.ghost:active { background: rgba(255, 255, 255, 0.12); }
+
+  .btn.primary {
+    min-width: 92px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 4px 14px rgba(76, 141, 255, 0.32);
+  }
+  .btn.primary:hover { background: var(--accent-hover); }
+  .btn.primary:disabled {
+    opacity: 0.5;
+    cursor: default;
+    box-shadow: none;
+  }
+</style>
+</head>
+<body>
+<div class="panel" id="panel">
+  <header class="titlebar" id="titlebar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">看图助手</span>
+    </div>
+    <div class="title-actions">
+      <button class="icon-btn" id="minimize" title="最小化" aria-label="最小化">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M6 12h12" />
+        </svg>
+      </button>
+      <button class="icon-btn close" id="close" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M7 7l10 10M17 7L7 17" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="content" id="content">
+    <div class="content-inner" id="content-inner">
+      <figure class="shot" id="shot-wrap" style="display:none">
+        <img id="shot" alt="截图预览">
+      </figure>
+      <section class="analysis">
+        <div class="analysis-head">
+          <span class="section-title">分析结果</span>
+          <span class="status" id="status"><span class="status-dot"></span><span id="status-text">待发送</span></span>
+          <span class="hint" id="hint" hidden></span>
+        </div>
+        <div class="analysis-body" id="analysis-body">
+          <div class="empty">截图就绪，说明你想让我看什么。</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="composer">
+    <div class="input-wrap">
+      <textarea id="note" rows="1" placeholder="说明你想让我看什么，例如：检查作业、批改文章…"></textarea>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="send" disabled>发送</button>
+      <button class="btn ghost" id="rescan">重新框选</button>
+      <button class="btn ghost" id="cancel">取消</button>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  window.onerror = function (message, source, lineno, colno) {
+    try {
+      var statusEl = document.getElementById('status-text');
+      if (statusEl) statusEl.textContent = '脚本错误 ' + lineno + ': ' + message;
+    } catch (displayError) { }
+    try {
+      window.chrome.webview.postMessage({ type: 'page-error', message: String(message), line: lineno });
+    } catch (postError) { }
+    return false;
+  };
+
+  var bridge = window.chrome && window.chrome.webview ? window.chrome.webview : null;
+
+  function post(message) {
+    if (!bridge) return;
+    try { bridge.postMessage(message); } catch (error) { /* host gone */ }
+  }
+
+  var els = {
+    panel: document.getElementById('panel'),
+    titlebar: document.getElementById('titlebar'),
+    content: document.getElementById('content'),
+    inner: document.getElementById('content-inner'),
+    shotWrap: document.getElementById('shot-wrap'),
+    shot: document.getElementById('shot'),
+    status: document.getElementById('status'),
+    statusText: document.getElementById('status-text'),
+    hint: document.getElementById('hint'),
+    body: document.getElementById('analysis-body'),
+    note: document.getElementById('note'),
+    send: document.getElementById('send'),
+    cancel: document.getElementById('cancel'),
+    rescan: document.getElementById('rescan'),
+    minimize: document.getElementById('minimize'),
+    close: document.getElementById('close')
+  };
+
+  var state = {
+    text: '',
+    error: '',
+    busy: false,
+    hasImage: false,
+    lastHeight: 0,
+    maxHeight: 9999,
+    stick: true
+  };
+
+  /* ---------- markdown-lite renderer ---------- */
+
+  function escapeHtml(value) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  var PATH_RE = /(?:[A-Za-z]:\\[^\s<>"'`]+|\/(?:[\w.\-]+\/)+[\w.\-]+(?::\d+(?::\d+)?)?)/g;
+
+  function plainHtml(text) {
+    var escaped = escapeHtml(text);
+    escaped = escaped.replace(PATH_RE, function (match) {
+      return '<code class="path">' + match + '</code>';
+    });
+    return escaped;
+  }
+
+  function inlineHtml(text) {
+    var out = '';
+    var last = 0;
+    var re = /`([^`\n]+)`/g;
+    var match;
+    while ((match = re.exec(text)) !== null) {
+      out += plainHtml(text.slice(last, match.index));
+      out += '<code>' + escapeHtml(match[1]) + '</code>';
+      last = re.lastIndex;
+    }
+    out += plainHtml(text.slice(last));
+    out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    return out;
+  }
+
+  function blockHtml(text) {
+    var lines = text.split('\n');
+    var html = '';
+    var listOpen = false;
+
+    function closeList() {
+      if (listOpen) { html += '</ul>'; listOpen = false; }
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.trim();
+
+      if (trimmed === '') {
+        closeList();
+        html += '<br>';
+        continue;
+      }
+
+      if (/^[-*+]\s+/.test(trimmed)) {
+        if (!listOpen) { html += '<ul>'; listOpen = true; }
+        html += '<li>' + inlineHtml(trimmed.replace(/^[-*+]\s+/, '')) + '</li>';
+        continue;
+      }
+
+      closeList();
+
+      if (/^#{1,4}\s+/.test(trimmed)) {
+        html += '<h4>' + inlineHtml(trimmed.replace(/^#{1,4}\s+/, '')) + '</h4>';
+        continue;
+      }
+
+      html += '<p>' + inlineHtml(line) + '</p>';
+    }
+
+    closeList();
+    return html;
+  }
+
+  function renderMarkdown(text) {
+    if (!text) return '';
+    var parts = text.split('```');
+    var html = '';
+    for (var i = 0; i < parts.length; i++) {
+      if (i % 2 === 1) {
+        var code = parts[i].replace(/^^[A-Za-z0-9_+\-.#]+\n/, '').replace(/\n$/, '');
+        html += '<pre><code>' + escapeHtml(code) + '</code></pre>';
+      } else {
+        html += blockHtml(parts[i]);
+      }
+    }
+    return html;
+  }
+
+  /* ---------- height / autosize ---------- */
+
+  var measureScheduled = false;
+
+  function scheduleMeasure() {
+    if (measureScheduled) return;
+    measureScheduled = true;
+    requestAnimationFrame(function () {
+      measureScheduled = false;
+      measure();
+    });
+  }
+
+  function measure() {
+    if (!state.hasImage) return;
+    var header = els.titlebar.offsetHeight;
+    var footer = document.querySelector('.composer').offsetHeight;
+    var style = getComputedStyle(els.content);
+    var pad = parseFloat(style.paddingTop || '0') + parseFloat(style.paddingBottom || '0');
+    var innerHeight = els.inner.scrollHeight;
+    if (state.hasImage) {
+      innerHeight = Math.max(innerHeight, els.shotWrap.offsetHeight + 100);
+    }
+    var desired = Math.ceil(header + footer + pad + innerHeight + 30 + 2);
+    if (state.hasImage) desired = Math.max(desired, 640);
+    var max = Math.min(state.maxHeight, window.innerHeight > 0 ? state.maxHeight : 9999);
+    var height = Math.max(200, Math.min(desired, max));
+    if (Math.abs(height - state.lastHeight) > 2) {
+      state.lastHeight = height;
+      post({ type: 'height', height: height });
+    }
+  }
+
+  function autosize() {
+    els.note.style.height = 'auto';
+    var next = Math.min(els.note.scrollHeight, 122);
+    els.note.style.height = next + 'px';
+    els.note.style.overflowY = els.note.scrollHeight > 122 ? 'auto' : 'hidden';
+    scheduleMeasure();
+  }
+
+  /* ---------- rendering ---------- */
+
+  function scrollToBottomIfSticking() {
+    if (!state.stick) return;
+    els.content.scrollTop = els.content.scrollHeight;
+  }
+
+  function render() {
+    if (state.error) {
+      els.body.innerHTML = '<p class="error-text">' + escapeHtml(state.error) + '</p>';
+    } else if (state.text) {
+      els.body.innerHTML = renderMarkdown(state.text);
+    } else {
+      els.body.innerHTML = '<div class="empty">' +
+        (state.busy ? '正在读取画面并分析…' : '截图就绪，说明你想让我看什么。') +
+        '</div>';
+    }
+    scrollToBottomIfSticking();
+    scheduleMeasure();
+  }
+
+  function setStatus(text, kind) {
+    els.status.className = 'status' + (kind ? ' ' + kind : '');
+    els.statusText.textContent = text;
+  }
+
+  function setBusy(busy) {
+    state.busy = busy;
+    els.send.disabled = busy || !state.hasImage;
+    els.note.disabled = busy;
+    if (busy) {
+      setStatus('分析中…', 'busy');
+      els.hint.textContent = '正在读取画面';
+    }
+  }
+
+  function resetForCapture() {
+    state.text = '';
+    state.error = '';
+    state.stick = true;
+    state.busy = false;
+    state.hasImage = true;
+    setStatus('待发送', '');
+    els.hint.textContent = '说明你想让我看什么';
+    els.send.disabled = false;
+    els.note.disabled = false;
+    els.note.value = '';
+    autosize();
+    render();
+  }
+
+  /* ---------- host messages ---------- */
+
+  function onInit(msg) {
+    if (msg && typeof msg.maxHeight === 'number' && msg.maxHeight > 200) {
+      state.maxHeight = Math.floor(msg.maxHeight);
+      document.documentElement.style.setProperty('--max-height', state.maxHeight + 'px');
+    }
+    if (msg && typeof msg.maxWidth === 'number' && msg.maxWidth > 400) {
+      document.documentElement.style.setProperty('--max-width', Math.floor(msg.maxWidth) + 'px');
+    }
+    scheduleMeasure();
+  }
+
+  function onCapture(msg) {
+    if (!msg || typeof msg.imageBase64 !== 'string' || !msg.imageBase64) return;
+    state.lastHeight = 0;
+    els.shotWrap.style.display = 'block';
+    els.shot.src = 'data:image/png;base64,' + msg.imageBase64;
+    post({ type: 'capture-ack', length: msg.imageBase64.length });
+    resetForCapture();
+    els.content.scrollTop = 0;
+    state.stick = true;
+    els.note.focus();
+    scheduleMeasure();
+  }
+
+  function onDelta(msg) {
+    if (!msg || typeof msg.text !== 'string') return;
+    if (!state.busy) setBusy(true);
+    state.text += msg.text;
+    render();
+  }
+
+  function onReplace(msg) {
+    if (!msg) return;
+    if (!state.busy) setBusy(true);
+    state.text = typeof msg.text === 'string' ? msg.text : '';
+    render();
+  }
+
+  function onDone() {
+    state.busy = false;
+    setBusy(false);
+    setStatus('分析完成', 'done');
+    els.hint.textContent = '可以继续追问';
+    els.note.focus();
+    scheduleMeasure();
+  }
+
+  function onError(msg) {
+    state.busy = false;
+    state.error = msg && msg.message ? String(msg.message) : '分析失败';
+    setBusy(false);
+    setStatus('分析失败', 'error');
+    els.hint.textContent = '可重试或重新框选';
+    render();
+    scheduleMeasure();
+  }
+
+  if (bridge) {
+    bridge.addEventListener('message', function (event) {
+      var msg = event.data;
+      if (!msg || !msg.type) return;
+      switch (msg.type) {
+        case 'init': onInit(msg); break;
+        case 'capture': onCapture(msg); break;
+        case 'analysis-delta': onDelta(msg); break;
+        case 'analysis-replace': onReplace(msg); break;
+        case 'analysis-done': onDone(); break;
+        case 'analysis-error': onError(msg); break;
+        default: break;
+      }
+    });
+  }
+
+  /* ---------- interactions ---------- */
+
+  els.titlebar.addEventListener('mousedown', function (event) {
+    if (event.button !== 0) return;
+    if (event.target.closest('button')) return;
+    event.preventDefault();
+    post({ type: 'drag' });
+  });
+
+  els.minimize.addEventListener('click', function () { post({ type: 'minimize' }); });
+  els.close.addEventListener('click', function () { post({ type: 'close' }); });
+  els.cancel.addEventListener('click', function () { post({ type: 'cancel' }); });
+  els.rescan.addEventListener('click', function () { post({ type: 'rescan' }); });
+
+  els.send.addEventListener('click', function () {
+    if (state.busy || !state.hasImage) return;
+    var note = els.note.value.trim();
+    state.text = '';
+    state.error = '';
+    state.stick = true;
+    setBusy(true);
+    render();
+    autosize();
+    post({ type: 'send', note: note });
+  });
+
+  els.note.addEventListener('input', autosize);
+
+  els.note.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      els.send.click();
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      post({ type: 'minimize' });
+    }
+  });
+
+  els.shot.addEventListener('load', scheduleMeasure);
+  els.content.addEventListener('scroll', function () {
+    var distance = els.content.scrollHeight - els.content.scrollTop - els.content.clientHeight;
+    state.stick = distance < 48;
+  });
+
+  if (window.ResizeObserver) {
+    new ResizeObserver(scheduleMeasure).observe(els.inner);
+  }
+  window.addEventListener('resize', scheduleMeasure);
+
+  autosize();
+  render();
+  post({ type: 'ready' });
+})();
+</script>
+</body>
+</html>

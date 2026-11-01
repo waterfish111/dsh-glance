@@ -1,0 +1,36 @@
+{
+  "name": "@local/dsh-see-screen",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Adds a header switch that launches an always-on-top capture widget; drag any region and send the screenshot to a dedicated multimodal conversation for homework, articles, errors and more.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "widget.ps1",
+    "panel.html",
+    "webview2/*.dll",
+    "webview2/LICENSE.txt",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

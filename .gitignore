@@ -1,0 +1,8 @@
+backup/
+state.json
+panel-host.tmp.ps1
+webview2-probe.ps1
+*.log
+node_modules/
+.DS_Store
+Thumbs.db
