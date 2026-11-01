@@ -1,9 +1,9 @@
 {
-  "name": "@local/dsh-see-screen",
-  "version": "0.2.0",
+  "name": "@local/dsh-glance",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Adds a header switch that launches an always-on-top capture widget; drag any region and send the screenshot to a dedicated multimodal conversation for homework, articles, errors and more.",
+  "description": "一瞥 / Glance：置顶悬浮球 + 框选任意屏幕区域 + 多模态流式分析。",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

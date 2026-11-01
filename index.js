@@ -16,8 +16,8 @@ export const inject = [
 ];
 
 export function apply(ctx) {
-  const logger = ctx.logger('screensnap');
-  const hostLogPath = join(tmpdir(), 'screensnap-host.log');
+  const logger = ctx.logger('glance');
+  const hostLogPath = join(tmpdir(), 'glance-host.log');
   const logHost = (text) => {
     try {
       appendFileSync(hostLogPath, `[${new Date().toISOString()}] ${String(text)}\n`);
@@ -26,7 +26,7 @@ export function apply(ctx) {
   const scriptPath = fileURLToPath(new URL('./widget.ps1', import.meta.url));
   const packageDir = dirname(scriptPath);
   const statePath = join(packageDir, 'state.json');
-  const ANALYSIS_TITLE = '看图助手';
+  const ANALYSIS_TITLE = '一瞥';
 
   let analysisSessionId;
   let analysisNamed = false;
@@ -415,12 +415,12 @@ export function apply(ctx) {
   }
 
   ctx.commands.register({
-    name: 'screensnap',
-    description: '开启或关闭看图助手悬浮窗（框选屏幕任意区域，截图直达多模态模型）',
+    name: 'glance',
+    description: '开启或关闭一瞥悬浮窗（框选屏幕任意区域，截图直达多模态模型）',
     recordInput: false,
     handler: async (invocation) => {
       let raw = String(invocation.rawInput || '').trim();
-      raw = raw.replace(/^\/?screensnap\b\s*/i, '');
+      raw = raw.replace(/^\/?glance\b\s*/i, '');
       const action = (raw.split(/\s+/)[0] || 'status').toLowerCase();
 
       if (action === 'on' || action === 'enable') {
@@ -430,30 +430,30 @@ export function apply(ctx) {
         }
         const result = await startWidget();
         if (!result.ok) {
-          return { kind: 'error', text: `无法启动看图助手：${result.error}` };
+          return { kind: 'error', text: `无法启动一瞥：${result.error}` };
         }
         return {
           kind: 'success',
           text: result.already
-            ? '看图助手已在运行。'
-            : '看图助手已开启。点击屏幕上的悬浮圆钮，框选任意区域，截图会直接发给多模态模型。'
+            ? '一瞥已在运行。'
+            : '一瞥已开启。点击屏幕上的悬浮圆钮，框选任意区域，截图会直接发给多模态模型。'
         };
       }
 
       if (action === 'off' || action === 'disable') {
-        if (!widget) return { kind: 'success', text: '看图助手未在运行。' };
+        if (!widget) return { kind: 'success', text: '一瞥未在运行。' };
         stopWidget();
-        return { kind: 'success', text: '看图助手已关闭。' };
+        return { kind: 'success', text: '一瞥已关闭。' };
       }
 
       if (action === 'status') {
         return {
           kind: 'success',
-          text: widget ? '看图助手悬浮窗正在运行。' : '看图助手悬浮窗未运行。'
+          text: widget ? '一瞥悬浮窗正在运行。' : '一瞥悬浮窗未运行。'
         };
       }
 
-      return { kind: 'error', text: '用法：/screensnap on | off | status' };
+      return { kind: 'error', text: '用法：/glance on | off | status' };
     }
   });
 

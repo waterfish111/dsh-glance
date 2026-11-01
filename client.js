@@ -1,16 +1,16 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-see-screen',
+  id: '@local/dsh-glance',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
 
-    const NS = 'see-screen';
-    const ENABLED_KEY = 'dsh-screensnap.enabled';
+    const NS = 'glance';
+    const ENABLED_KEY = 'dsh-glance.enabled';
 
     const DICTS = {
       en: {
-        'toggle.label': 'Screen assistant',
-        'toggle.on': 'Screen assistant is on. Click to stop the capture widget.',
+        'toggle.label': 'Glance',
+        'toggle.on': 'Glance is on. Click to stop the capture widget.',
         'toggle.off': 'Start the capture widget and send any selected region to the multimodal model.',
         'toggle.busyText': 'Starting...',
         'toggle.busy': 'Starting the capture widget...',
@@ -18,8 +18,8 @@ window.__ModuleLoader__.load({
         'error.command': 'The command could not run. Is the plugin enabled?'
       },
       zh: {
-        'toggle.label': '看图助手',
-        'toggle.on': '看图助手已开启，点击关闭抓屏小部件',
+        'toggle.label': '一瞥',
+        'toggle.on': '一瞥已开启，点击关闭抓屏小部件',
         'toggle.off': '开启抓屏小部件，框选任意区域交给多模态模型',
         'toggle.busyText': '启动中…',
         'toggle.busy': '正在启动抓屏小部件…',
@@ -103,7 +103,7 @@ window.__ModuleLoader__.load({
         const next = !store.enabled;
         setStore({ busy: true, error: '' });
         try {
-          const result = await binding.session.command(`/screensnap ${next ? 'on' : 'off'}`);
+          const result = await binding.session.command(`/glance ${next ? 'on' : 'off'}`);
           const matched = Boolean(result && result.ok === true && result.value && result.value.matched);
           if (!matched) {
             setStore({ busy: false, error: t('error.command') });
@@ -208,7 +208,7 @@ window.__ModuleLoader__.load({
           ctx.slots.register(
             {
               name: 'conversation.session.header.utilities',
-              id: 'screensnap-toggle',
+              id: 'glance-toggle',
               order: 20,
               label: () => translate('toggle.label')
             },

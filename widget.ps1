@@ -816,7 +816,7 @@ function Convert-ImageToBase64([System.Drawing.Image]$image) {
 function Write-Log([string]$text) {
   try {
     if ([string]::IsNullOrEmpty($script:logPath)) {
-      $script:logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'screensnap-widget.log'
+      $script:logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'glance-widget.log'
       try { [System.IO.File]::WriteAllText($script:logPath, '') } catch { }
     }
     $line = ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss.fff'), $text) + [Environment]::NewLine
@@ -1362,7 +1362,7 @@ function Complete-Capture([System.Drawing.Rectangle]$rect) {
     if ($null -ne $previewImage) { $previewImage.Dispose() }
     [System.Windows.Forms.MessageBox]::Show(
       ('无法准备截图：' + $_.Exception.Message),
-      '看图助手',
+      '一瞥',
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Warning
     ) | Out-Null
@@ -1413,7 +1413,7 @@ function Start-Capture {
   if ($null -eq $bitmap) {
     [System.Windows.Forms.MessageBox]::Show(
       '无法抓取屏幕内容。',
-      '看图助手',
+      '一瞥',
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Warning
     ) | Out-Null
@@ -1443,8 +1443,8 @@ try {
     param($sender, $e)
     [Console]::Error.WriteLine($e.Exception.ToString())
     [System.Windows.Forms.MessageBox]::Show(
-      ('看图助手出错：' + $e.Exception.Message),
-      '看图助手',
+      ('一瞥出错：' + $e.Exception.Message),
+      '一瞥',
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Error
     ) | Out-Null
@@ -1529,7 +1529,7 @@ try {
   $script:tooltip.SetToolTip($ballForm, '点击框选屏幕区域；点我收起面板')
 
   $panelForm = [ScreenSnapMainForm]::new()
-  $panelForm.Text = '看图助手'
+  $panelForm.Text = '一瞥'
   $panelForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
   $panelForm.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
   $panelForm.Size = [System.Drawing.Size]::new($script:panelWidth, $script:panelHeight)
@@ -1586,7 +1586,7 @@ try {
       param($sender, $eventArgs)
       try {
         [System.IO.File]::AppendAllText(
-          (Join-Path ([System.IO.Path]::GetTempPath()) 'screensnap-msg.log'),
+          (Join-Path ([System.IO.Path]::GetTempPath()) 'glance-msg.log'),
           [string]$eventArgs.WebMessageAsJson + [Environment]::NewLine,
           [System.Text.UTF8Encoding]::new($false))
       } catch { }
@@ -1660,7 +1660,7 @@ try {
     $script:selftestCapture.Add_Tick({
       $script:selftestCapture.Stop()
       $script:selftestCapture.Dispose()
-      $path = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'screensnap-selftest.png')
+      $path = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'glance-selftest.png')
       $stream = $null
       try {
         if ($null -ne $script:web -and $null -ne $script:web.CoreWebView2) {

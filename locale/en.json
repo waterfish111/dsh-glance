@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Screen Assistant",
+    "title": "Glance",
     "description": "Adds a conversation-header switch that launches an always-on-top capture widget. Drag a region anywhere on screen - homework, articles, errors - and send the screenshot to a dedicated multimodal conversation."
   }
 }
