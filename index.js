@@ -238,7 +238,7 @@ export function apply(ctx) {
   }
 
   async function runTurn(content, label) {
-    const run = { controller: new AbortController(), stoppedByUser: false };
+    const run = { controller: new AbortController(), stoppedByUser: false, sessionId: undefined };
     activeRun = run;
     try {
       let lastError;
@@ -249,6 +249,7 @@ export function apply(ctx) {
         try {
           const ensured = await ensureAnalysisSession();
           sessionId = ensured.sessionId;
+          run.sessionId = sessionId;
           if (ensured.created && hadSession) {
             logger.info('analysis session was recreated; context reset');
             sendToWidget({ type: 'session-reset' });
@@ -274,6 +275,7 @@ export function apply(ctx) {
 
       if (run.stoppedByUser) {
         logHost('stopped before stream');
+        await cancelTurn(sessionId);
         sendToWidget({ type: 'analysis-stopped' });
         return;
       }
@@ -339,10 +341,27 @@ export function apply(ctx) {
     await runTurn([{ type: 'text', text: value }], 'followup');
   }
 
-  function stopAnalysis() {
+  async function cancelTurn(sessionId) {
+    if (!sessionId) return;
+    if (!ctx.sessionController || typeof ctx.sessionController.cancel !== 'function') return;
+    try {
+      await ctx.sessionController.cancel({ sessionId });
+      logHost('cancel ' + sessionId);
+    } catch (error) {
+      logger.warn(`cancel failed: ${error && error.message ? error.message : String(error)}`);
+    }
+  }
+
+  async function stopAnalysis() {
     const run = activeRun;
     if (!run) return false;
     run.stoppedByUser = true;
+
+    // Aborting our AbortController only tears down this plugin's view of the
+    // stream; the Agent turn keeps running in the host. Ask the host to cancel
+    // the turn itself so the model actually stops generating.
+    await cancelTurn(run.sessionId);
+
     try {
       run.controller.abort();
     } catch {
@@ -460,7 +479,13 @@ export function apply(ctx) {
           return;
         }
         if (message.type === 'abort') {
-          if (!stopAnalysis()) sendToWidget({ type: 'analysis-stopped' });
+          stopAnalysis()
+            .then((stopped) => {
+              if (!stopped) sendToWidget({ type: 'analysis-stopped' });
+            })
+            .catch((error) =>
+              logger.warn(`abort: ${error && error.message ? error.message : String(error)}`)
+            );
         }
       });
     }
