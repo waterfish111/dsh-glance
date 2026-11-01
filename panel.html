@@ -78,8 +78,6 @@
     min-width: 0;
   }
 
-  .brand-dot { display: none; }
-
   .brand-name {
     font-size: 20px;
     font-weight: 650;
@@ -144,20 +142,19 @@
   .content-inner { display: block; }
 
   .shot {
+    display: flex;
+    justify-content: center;
     margin: 0 0 16px;
-    border-radius: 12px;
-    overflow: hidden;
-    background: #0a0c12;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.075), 0 6px 20px rgba(0, 0, 0, 0.28);
   }
 
   .shot img {
     display: block;
     max-width: 100%;
-    max-height: 300px;
-    margin: 0 auto;
+    max-height: min(240px, 30vh);
+    border-radius: 12px;
     object-fit: contain;
     background: #0a0c12;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.075), 0 6px 20px rgba(0, 0, 0, 0.28);
   }
 
   .analysis-head {
@@ -196,7 +193,15 @@
   .status.done .status-dot { background: #3ecf8e; }
   .status.error { color: #ff8d9c; }
   .status.error .status-dot { background: #ff5f75; }
-  .hint { color: var(--dim); white-space: nowrap; }
+  .notice {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(76, 141, 255, 0.14);
+    color: #b9c7e2;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
 
   @keyframes pulse {
     0%, 100% { opacity: 0.35; transform: scale(0.9); }
@@ -276,6 +281,7 @@
   .composer {
     flex: 0 0 auto;
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     gap: 10px;
     margin: 0 18px 18px;
@@ -286,7 +292,7 @@
   }
 
   .input-wrap {
-    flex: 1 1 auto;
+    flex: 1 1 100%;
     min-width: 0;
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.05);
@@ -320,11 +326,17 @@
 
   .actions {
     display: flex;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
     gap: 8px;
+    min-width: 0;
+    max-width: 100%;
   }
 
-  #cancel { display: none; }
+  .btn.stop { display: none; min-width: 72px; }
+  .btn.stop.on { display: inline-flex; }
 
   .btn {
     display: inline-flex;
@@ -335,6 +347,7 @@
     padding: 0 18px;
     border: 0;
     border-radius: 12px;
+    white-space: nowrap;
     font-family: var(--sans);
     font-size: 13px;
     cursor: pointer;
@@ -364,13 +377,18 @@
     cursor: default;
     box-shadow: none;
   }
+  @media (max-width: 380px) {
+    .composer { gap: 8px; margin: 0 12px 12px; padding: 8px; }
+    .btn { padding: 0 12px; font-size: 12.5px; }
+    .btn.primary { min-width: 78px; }
+    .btn.stop { min-width: 56px; }
+  }
 </style>
 </head>
 <body>
 <div class="panel" id="panel">
   <header class="titlebar" id="titlebar">
     <div class="brand">
-      <span class="brand-dot"></span>
       <span class="brand-name">一瞥</span>
     </div>
     <div class="title-actions">
@@ -396,7 +414,6 @@
         <div class="analysis-head">
           <span class="section-title">分析结果</span>
           <span class="status" id="status"><span class="status-dot"></span><span id="status-text">待发送</span></span>
-          <span class="hint" id="hint" hidden></span>
         </div>
         <div class="analysis-body" id="analysis-body">
           <div class="empty">截图就绪，说明你想让我看什么。</div>
@@ -410,9 +427,9 @@
       <textarea id="note" rows="1" placeholder="说明你想让我看什么，例如：检查作业、批改文章…"></textarea>
     </div>
     <div class="actions">
+      <button class="btn ghost stop" id="stop">停止</button>
       <button class="btn primary" id="send" disabled>发送</button>
       <button class="btn ghost" id="rescan">重新框选</button>
-      <button class="btn ghost" id="cancel">取消</button>
     </div>
   </footer>
 </div>
@@ -448,11 +465,10 @@
     shot: document.getElementById('shot'),
     status: document.getElementById('status'),
     statusText: document.getElementById('status-text'),
-    hint: document.getElementById('hint'),
     body: document.getElementById('analysis-body'),
     note: document.getElementById('note'),
     send: document.getElementById('send'),
-    cancel: document.getElementById('cancel'),
+    stop: document.getElementById('stop'),
     rescan: document.getElementById('rescan'),
     minimize: document.getElementById('minimize'),
     close: document.getElementById('close')
@@ -461,8 +477,10 @@
   var state = {
     text: '',
     error: '',
+    notice: '',
     busy: false,
     hasImage: false,
+    sent: false,
     lastHeight: 0,
     maxHeight: 9999,
     stick: true
@@ -581,9 +599,8 @@
       innerHeight = Math.max(innerHeight, els.shotWrap.offsetHeight + 100);
     }
     var desired = Math.ceil(header + footer + pad + innerHeight + 30 + 2);
-    if (state.hasImage) desired = Math.max(desired, 640);
-    var max = Math.min(state.maxHeight, window.innerHeight > 0 ? state.maxHeight : 9999);
-    var height = Math.max(200, Math.min(desired, max));
+    if (state.hasImage) desired = Math.max(desired, 360);
+    var height = Math.max(200, Math.min(desired, state.maxHeight));
     if (Math.abs(height - state.lastHeight) > 2) {
       state.lastHeight = height;
       post({ type: 'height', height: height });
@@ -606,15 +623,17 @@
   }
 
   function render() {
+    var html = state.notice ? '<p class="notice">' + escapeHtml(state.notice) + '</p>' : '';
     if (state.error) {
-      els.body.innerHTML = '<p class="error-text">' + escapeHtml(state.error) + '</p>';
+      html += '<p class="error-text">' + escapeHtml(state.error) + '</p>';
     } else if (state.text) {
-      els.body.innerHTML = renderMarkdown(state.text);
+      html += renderMarkdown(state.text);
     } else {
-      els.body.innerHTML = '<div class="empty">' +
+      html += '<div class="empty">' +
         (state.busy ? '正在读取画面并分析…' : '截图就绪，说明你想让我看什么。') +
         '</div>';
     }
+    els.body.innerHTML = html;
     scrollToBottomIfSticking();
     scheduleMeasure();
   }
@@ -624,27 +643,34 @@
     els.statusText.textContent = text;
   }
 
+  function updateSendState() {
+    var hasText = els.note.value.trim().length > 0;
+    els.send.disabled = state.busy || !state.hasImage || (state.sent && !hasText);
+  }
+
   function setBusy(busy) {
     state.busy = busy;
-    els.send.disabled = busy || !state.hasImage;
     els.note.disabled = busy;
-    if (busy) {
-      setStatus('分析中…', 'busy');
-      els.hint.textContent = '正在读取画面';
-    }
+    els.stop.classList.toggle('on', busy);
+    els.send.textContent = busy ? '思考中' : (state.sent ? '追问' : '发送');
+    updateSendState();
+    if (busy) setStatus('分析中…', 'busy');
   }
 
   function resetForCapture() {
     state.text = '';
     state.error = '';
+    state.notice = '';
     state.stick = true;
     state.busy = false;
     state.hasImage = true;
+    state.sent = false;
     setStatus('待发送', '');
-    els.hint.textContent = '说明你想让我看什么';
-    els.send.disabled = false;
+    els.stop.classList.remove('on');
     els.note.disabled = false;
     els.note.value = '';
+    els.send.textContent = '发送';
+    updateSendState();
     autosize();
     render();
   }
@@ -667,7 +693,6 @@
     state.lastHeight = 0;
     els.shotWrap.style.display = 'block';
     els.shot.src = 'data:image/png;base64,' + msg.imageBase64;
-    post({ type: 'capture-ack', length: msg.imageBase64.length });
     resetForCapture();
     els.content.scrollTop = 0;
     state.stick = true;
@@ -693,7 +718,6 @@
     state.busy = false;
     setBusy(false);
     setStatus('分析完成', 'done');
-    els.hint.textContent = '可以继续追问';
     els.note.focus();
     scheduleMeasure();
   }
@@ -703,7 +727,20 @@
     state.error = msg && msg.message ? String(msg.message) : '分析失败';
     setBusy(false);
     setStatus('分析失败', 'error');
-    els.hint.textContent = '可重试或重新框选';
+    render();
+    scheduleMeasure();
+  }
+
+  function onStopped() {
+    setBusy(false);
+    setStatus('已停止', '');
+    els.note.focus();
+    render();
+    scheduleMeasure();
+  }
+
+  function onSessionReset() {
+    state.notice = '上次的分析会话已失效，已新建会话，之前的上下文不再保留。';
     render();
     scheduleMeasure();
   }
@@ -719,6 +756,8 @@
         case 'analysis-replace': onReplace(msg); break;
         case 'analysis-done': onDone(); break;
         case 'analysis-error': onError(msg); break;
+        case 'analysis-stopped': onStopped(); break;
+        case 'session-reset': onSessionReset(); break;
         default: break;
       }
     });
@@ -735,22 +774,43 @@
 
   els.minimize.addEventListener('click', function () { post({ type: 'minimize' }); });
   els.close.addEventListener('click', function () { post({ type: 'close' }); });
-  els.cancel.addEventListener('click', function () { post({ type: 'cancel' }); });
   els.rescan.addEventListener('click', function () { post({ type: 'rescan' }); });
+
+  els.stop.addEventListener('click', function () {
+    if (!state.busy) return;
+    post({ type: 'stop' });
+    els.stop.classList.remove('on');
+    setStatus('正在停止…', 'busy');
+  });
+
+  function beginTurn(message) {
+    state.text = '';
+    state.error = '';
+    state.notice = '';
+    state.stick = true;
+    els.note.value = '';
+    setBusy(true);
+    render();
+    autosize();
+    post(message);
+  }
 
   els.send.addEventListener('click', function () {
     if (state.busy || !state.hasImage) return;
     var note = els.note.value.trim();
-    state.text = '';
-    state.error = '';
-    state.stick = true;
-    setBusy(true);
-    render();
-    autosize();
-    post({ type: 'send', note: note });
+    if (state.sent) {
+      if (!note) return;
+      beginTurn({ type: 'followup', text: note });
+      return;
+    }
+    beginTurn({ type: 'send', note: note });
+    state.sent = true;
   });
 
-  els.note.addEventListener('input', autosize);
+  els.note.addEventListener('input', function () {
+    autosize();
+    updateSendState();
+  });
 
   els.note.addEventListener('keydown', function (event) {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -773,7 +833,9 @@
   });
 
   if (window.ResizeObserver) {
-    new ResizeObserver(scheduleMeasure).observe(els.inner);
+    var resizeObserver = new ResizeObserver(scheduleMeasure);
+    resizeObserver.observe(els.inner);
+    resizeObserver.observe(document.querySelector('.composer'));
   }
   window.addEventListener('resize', scheduleMeasure);
 

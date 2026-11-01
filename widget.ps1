@@ -174,6 +174,7 @@ $script:ballDrag = $null
 $script:shadowForm = $null
 $script:shadowMargin = 18
 $script:panelForm = $null
+$script:dpiScale = 1.0
 $script:panelWidth = 440
 $script:panelHeight = 524
 $script:panelTail = 24
@@ -189,21 +190,12 @@ $script:panelX = 0
 $script:panelY = 0
 $script:previewImage = $null
 $script:captureImageBase64 = $null
-$script:picture = $null
-$script:note = $null
-$script:card = $null
-$script:noteLabel = $null
-$script:notePanel = $null
-$script:buttonPanel = $null
-$script:title = $null
-$script:subtitle = $null
-$script:close = $null
-$script:panelControls = @()
 $script:web = $null
 $script:webCore = $null
 $script:webEnvironment = $null
 $script:pageReady = $false
 $script:webStarted = $false
+$script:webHintShown = $false
 $script:panelUri = ''
 $script:panelImageWidth = 0
 $script:panelImageHeight = 0
@@ -212,9 +204,6 @@ $script:capturePublished = $false
 $script:hostQueue = $null
 $script:hostReader = $null
 $script:hostTimer = $null
-$script:toastAfterCollapse = ''
-$script:toast = $null
-$script:toastTimer = $null
 $script:parentTimer = $null
 $script:tooltip = $null
 $script:frozen = $null
@@ -222,7 +211,6 @@ $script:hud = $null
 $script:frozenImage = $null
 $script:virtual = $null
 $script:captureBitmap = $null
-$script:selection = [System.Drawing.Rectangle]::Empty
 $script:selectStart = $null
 $script:selecting = $false
 $script:busy = $false
@@ -382,197 +370,9 @@ function Move-PanelToBall {
   Update-Shadow $script:panelWidth $script:panelForm.Height
 }
 
-function Draw-PanelSurface([System.Drawing.Graphics]$graphics, [int]$width, [int]$height) {
-  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  if ($height -le $script:panelTail) {
-    $tailPoints = @(
-      [System.Drawing.Point]::new(($width - 56), ($script:panelTail + 1)),
-      [System.Drawing.Point]::new(($width - 28), ($script:panelTail + 1)),
-      [System.Drawing.Point]::new(($width - 42), 0)
-    )
-    $tailBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
-    try {
-      $graphics.FillPolygon($tailBrush, $tailPoints)
-    } finally {
-      $tailBrush.Dispose()
-    }
-    return
-  }
-
-  $panelPath = New-RoundedPath 0 $script:panelTail $width ($height - $script:panelTail) 16
-  $panelFill = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(30, 36, 48))
-  try {
-    $graphics.FillPath($panelFill, $panelPath)
-  } finally {
-    $panelFill.Dispose()
-  }
-
-  $header = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
-  try {
-    $graphics.FillRectangle($header, 0, $script:panelTail, $width, 60)
-  } finally {
-    $header.Dispose()
-  }
-
-  $separator = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(44, 53, 68), 1)
-  try {
-    $separatorY = $script:panelTail + 60
-    $graphics.DrawLine($separator, 16, $separatorY, ($width - 16), $separatorY)
-  } finally {
-    $separator.Dispose()
-  }
-
-  $tailPoints = @(
-    [System.Drawing.Point]::new(($width - 56), ($script:panelTail + 1)),
-    [System.Drawing.Point]::new(($width - 28), ($script:panelTail + 1)),
-    [System.Drawing.Point]::new(($width - 42), 0)
-  )
-  $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
-  try {
-    $graphics.DrawPath($border, $panelPath)
-  } finally {
-    $border.Dispose()
-  }
-
-  $tailBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
-  $tailPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
-  try {
-    $graphics.FillPolygon($tailBrush, $tailPoints)
-    $graphics.DrawLine($tailPen, $tailPoints[0], $tailPoints[2])
-    $graphics.DrawLine($tailPen, $tailPoints[2], $tailPoints[1])
-  } finally {
-    $tailPen.Dispose()
-    $tailBrush.Dispose()
-    $panelPath.Dispose()
-  }
-}
-
 function Set-PanelRegion {
   if ($null -eq $script:panelForm) { return }
   Set-RoundedRegion $script:panelForm 16
-}
-
-function Draw-PanelCard([System.Drawing.Graphics]$graphics, [int]$width, [int]$height) {
-  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $panelPath = New-RoundedPath 0 0 $width $height 16
-  try {
-    $panelFill = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(30, 36, 48))
-    try {
-      $graphics.FillPath($panelFill, $panelPath)
-    } finally {
-      $panelFill.Dispose()
-    }
-
-    $header = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
-    try {
-      $graphics.FillRectangle($header, 0, 0, $width, 64)
-    } finally {
-      $header.Dispose()
-    }
-
-    $separator = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(44, 53, 68), 1)
-    try {
-      $graphics.DrawLine($separator, 16, 64, ($width - 16), 64)
-    } finally {
-      $separator.Dispose()
-    }
-
-    $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
-    try {
-      $graphics.DrawPath($border, $panelPath)
-    } finally {
-      $border.Dispose()
-    }
-  } finally {
-    $panelPath.Dispose()
-  }
-}
-
-function Set-PanelCardRegion([int]$width, [int]$height) {
-  if ($null -eq $script:panelForm) { return }
-  $path = New-RoundedPath 0 0 $width $height 16
-  try {
-    $region = [System.Drawing.Region]::new($path)
-    $old = $script:panelForm.Region
-    $script:panelForm.Region = $region
-    if ($null -ne $old) { $old.Dispose() }
-  } finally {
-    $path.Dispose()
-  }
-}
-
-function New-BubblePath([int]$width, [int]$height, [int]$tailHeight) {
-  $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
-  $diameter = 32
-  $top = $tailHeight
-  $bodyHeight = $height - $top
-  if ($diameter -gt $bodyHeight) { $diameter = $bodyHeight }
-  if ($diameter -lt 2) { $diameter = 2 }
-  $path.AddArc(0, $top, $diameter, $diameter, 180, 90)
-  $path.AddLine($diameter, $top, ($width - 56), $top)
-  $path.AddLine(($width - 56), $top, ($width - 42), 2)
-  $path.AddLine(($width - 42), 2, ($width - 28), $top)
-  $path.AddLine(($width - 28), $top, ($width - $diameter), $top)
-  $path.AddArc(($width - $diameter), $top, $diameter, $diameter, 270, 90)
-  $path.AddLine($width, ($top + $diameter), $width, ($height - $diameter))
-  $path.AddArc(($width - $diameter), ($height - $diameter), $diameter, $diameter, 0, 90)
-  $path.AddLine(($width - $diameter), $height, $diameter, $height)
-  $path.AddArc(0, ($height - $diameter), $diameter, $diameter, 90, 90)
-  $path.AddLine(0, ($height - $diameter), 0, ($top + $diameter))
-  $path.CloseFigure()
-  return $path
-}
-
-function Draw-PanelBubble([System.Drawing.Graphics]$graphics, [int]$width, [int]$height) {
-  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $path = New-BubblePath $width $height $script:panelTail
-  try {
-    $header = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(35, 42, 56))
-    try {
-      $graphics.FillPath($header, $path)
-    } finally {
-      $header.Dispose()
-    }
-
-    $bodyTop = $script:panelTail + 64
-    if ($height -gt $bodyTop) {
-      $body = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(30, 36, 48))
-      try {
-        $graphics.FillRectangle($body, 0, $bodyTop, $width, ($height - $bodyTop))
-      } finally {
-        $body.Dispose()
-      }
-
-      $separator = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(44, 53, 68), 1)
-      try {
-        $graphics.DrawLine($separator, 16, $bodyTop, ($width - 16), $bodyTop)
-      } finally {
-        $separator.Dispose()
-      }
-    }
-
-    $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1)
-    try {
-      $graphics.DrawPath($border, $path)
-    } finally {
-      $border.Dispose()
-    }
-  } finally {
-    $path.Dispose()
-  }
-}
-
-function Set-PanelBubbleRegion([int]$width, [int]$height) {
-  if ($null -eq $script:panelForm) { return }
-  $path = New-BubblePath $width $height $script:panelTail
-  try {
-    $region = [System.Drawing.Region]::new($path)
-    $old = $script:panelForm.Region
-    $script:panelForm.Region = $region
-    if ($null -ne $old) { $old.Dispose() }
-  } finally {
-    $path.Dispose()
-  }
 }
 
 function Update-Shadow([int]$width, [int]$height) {
@@ -726,12 +526,6 @@ function Start-PanelAnimation([int]$fromHeight, [int]$toHeight, [scriptblock]$do
   $timer.Start()
 }
 
-function Hide-PanelControls {
-}
-
-function Show-PanelControls {
-}
-
 function Clear-PreviewData {
   if ($null -ne $script:previewImage) {
     $script:previewImage.Dispose()
@@ -756,51 +550,27 @@ function Hide-Ball {
   if ($null -ne $script:ballForm) { $script:ballForm.Hide() }
 }
 
-function Show-Toast([string]$message) {
-  if ($null -ne $script:toast) {
-    try { $script:toast.Close(); $script:toast.Dispose() } catch { }
-    $script:toast = $null
+function Show-WebViewHint([string]$detail) {
+  Write-Log ('webview unavailable: ' + $detail)
+  if ($script:webHintShown) { return }
+  $script:webHintShown = $true
+  $nl = [Environment]::NewLine
+  $text = '一瞥的悬浮面板无法启动。' + $nl + $nl +
+    '最常见的原因是缺少 Microsoft Edge WebView2 运行时，' + $nl +
+    '安装后重新打开开关即可：' + $nl +
+    'https://developer.microsoft.com/microsoft-edge/webview2/' + $nl + $nl +
+    '详细信息已写入日志：' + $nl + [string]$script:logPath
+  try {
+    [System.Windows.Forms.MessageBox]::Show(
+      $text,
+      '一瞥 / Glance',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    ) | Out-Null
+  } catch {
+    Write-Log ('webview hint dialog failed: ' + $_.Exception.Message)
   }
-  if ($null -ne $script:toastTimer) {
-    try { $script:toastTimer.Stop(); $script:toastTimer.Dispose() } catch { }
-    $script:toastTimer = $null
-  }
-
-  $toast = [System.Windows.Forms.Form]::new()
-  $toast.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
-  $toast.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-  $toast.Size = [System.Drawing.Size]::new(320, 48)
-  $toast.TopMost = $true
-  $toast.ShowInTaskbar = $false
-  $toast.BackColor = [System.Drawing.Color]::FromArgb(30, 36, 48)
-
-  $label = [System.Windows.Forms.Label]::new()
-  $label.Text = $message
-  $label.ForeColor = [System.Drawing.Color]::White
-  $label.Dock = [System.Windows.Forms.DockStyle]::Fill
-  $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
-  $toast.Controls.Add($label)
-
-  $left = $script:ballX - 330
-  if ($left -lt 8) { $left = 8 }
-  $toast.Location = [System.Drawing.Point]::new($left, $script:ballY)
-  $script:toast = $toast
-  $toast.Show()
-
-  $timer = [System.Windows.Forms.Timer]::new()
-  $timer.Interval = 1800
-  $script:toastTimer = $timer
-  $timer.Add_Tick({
-    $script:toastTimer.Stop()
-    if ($null -ne $script:toast) {
-      $script:toast.Close()
-      $script:toast.Dispose()
-      $script:toast = $null
-    }
-    $script:toastTimer.Dispose()
-    $script:toastTimer = $null
-  })
-  $timer.Start()
+  Collapse-Panel -Immediate
 }
 
 function Convert-ImageToBase64([System.Drawing.Image]$image) {
@@ -862,10 +632,14 @@ function Send-PanelInit {
     [System.Drawing.Point]::new(($script:ballX + 42), ($script:ballY + 42))
   )
   $area = $screen.WorkingArea
+  $scale = $script:dpiScale
+  if ($null -eq $scale -or $scale -le 0) { $scale = 1.0 }
+  $maxHeightDip = [Math]::Min([int]($area.Height * 0.7), [int](640 * $scale))
+  $maxWidthDip = [Math]::Min([int]($area.Width * 0.8), [int](560 * $scale))
   Send-PanelMessage @{
     type = 'init'
-    maxHeight = [int]($area.Height * 0.7)
-    maxWidth = [int]($area.Width * 0.8)
+    maxHeight = [int]($maxHeightDip / $scale)
+    maxWidth = [int]($maxWidthDip / $scale)
   }
 }
 
@@ -873,7 +647,6 @@ function Send-PanelCapture {
   if (-not $script:pageReady) { return }
   if ($script:capturePublished) { return }
   if ([string]::IsNullOrEmpty($script:captureImageBase64)) { return }
-  [Console]::Error.WriteLine('panel-capture len=' + $script:captureImageBase64.Length)
   Write-Log ('capture->panel len=' + $script:captureImageBase64.Length)
   Send-PanelMessage @{
     type = 'capture'
@@ -884,18 +657,28 @@ function Send-PanelCapture {
   $script:capturePublished = $true
 }
 
+function Send-HostMessage([hashtable]$message) {
+  $payload = $message | ConvertTo-Json -Compress
+  [Console]::Out.WriteLine($payload)
+  [Console]::Out.Flush()
+}
+
 function Send-Capture([string]$note) {
   if ([string]::IsNullOrEmpty($script:captureImageBase64)) {
     Send-PanelMessage @{ type = 'analysis-error'; message = '截图数据为空，请重新框选。' }
     return
   }
-  $payload = @{
-    type = 'capture'
-    imageBase64 = $script:captureImageBase64
-    note = $note
-  } | ConvertTo-Json -Compress
-  [Console]::Out.WriteLine($payload)
-  [Console]::Out.Flush()
+  Send-HostMessage @{ type = 'capture'; imageBase64 = $script:captureImageBase64; note = $note }
+}
+
+function Send-Followup([string]$text) {
+  $value = ([string]$text).Trim()
+  if ([string]::IsNullOrEmpty($value)) { return }
+  Send-HostMessage @{ type = 'followup'; text = $value }
+}
+
+function Send-Abort {
+  Send-HostMessage @{ type = 'abort' }
 }
 
 function Set-PanelHeight([int]$value) {
@@ -904,10 +687,14 @@ function Set-PanelHeight([int]$value) {
     [System.Drawing.Point]::new(($script:ballX + 42), ($script:ballY + 42))
   )
   $area = $screen.WorkingArea
-  $max = [Math]::Max(200, [int]($area.Height * 0.7))
-  $target = [Math]::Max(200, [Math]::Min($value, $max))
+  $scale = $script:dpiScale
+  if ($null -eq $scale -or $scale -le 0) { $scale = 1.0 }
+  $minHeight = [int](200 * $scale)
+  $max = [Math]::Min([int]($area.Height * 0.7), [int](640 * $scale))
+  if ($max -lt $minHeight) { $max = $minHeight }
+  $target = [Math]::Max($minHeight, [Math]::Min([int]($value * $scale), $max))
   if ($script:panelAnimating) {
-    $script:pendingPanelHeight = $target
+    $script:pendingPanelHeight = $value
     return
   }
   if ([Math]::Abs($script:panelForm.Height - $target) -le 2) { return }
@@ -930,8 +717,7 @@ function Handle-PanelMessage([string]$json) {
   $message = $null
   try { $message = $json | ConvertFrom-Json } catch { return }
   if ($null -eq $message -or $null -eq $message.type) { return }
-  [Console]::Error.WriteLine('panel-msg ' + [string]$message.type)
-  Write-Log ('panel-msg ' + [string]$message.type)
+  if ([string]$message.type -ne 'height') { Write-Log ('panel-msg ' + [string]$message.type) }
   switch ([string]$message.type) {
     'ready' {
       $script:pageReady = $true
@@ -939,12 +725,17 @@ function Handle-PanelMessage([string]$json) {
       Send-PanelCapture
       Flush-PanelMessages
     }
-    'capture-ack' { [Console]::Error.WriteLine('panel-capture-ack len=' + [string]$message.length) }
     'height' {
       if ($null -ne $message.height) { Set-PanelHeight ([int]$message.height) }
     }
     'send' {
       Send-Capture ([string]$message.note)
+    }
+    'followup' {
+      Send-Followup ([string]$message.text)
+    }
+    'stop' {
+      Send-Abort
     }
     'drag' {
       if ($null -ne $script:panelForm) {
@@ -953,7 +744,6 @@ function Handle-PanelMessage([string]$json) {
       }
     }
     'minimize' { Collapse-Panel }
-    'cancel' { Collapse-Panel }
     'rescan' {
       Collapse-Panel -Immediate
       Start-Capture
@@ -966,11 +756,12 @@ function Handle-HostLine([string]$json) {
   $message = $null
   try { $message = $json | ConvertFrom-Json } catch { return }
   if ($null -eq $message -or $null -eq $message.type) { return }
-  Write-Log ('host-line ' + [string]$message.type)
+  if ([string]$message.type -ne 'analysis-delta') { Write-Log ('host-line ' + [string]$message.type) }
   switch ([string]$message.type) {
     'analysis-delta' { Send-PanelMessage @{ type = 'analysis-delta'; text = [string]$message.text } }
     'analysis-replace' { Send-PanelMessage @{ type = 'analysis-replace'; text = [string]$message.text } }
     'analysis-done' { Send-PanelMessage @{ type = 'analysis-done' } }
+    'analysis-stopped' { Send-PanelMessage @{ type = 'analysis-stopped' } }
     'analysis-error' { Send-PanelMessage @{ type = 'analysis-error'; message = [string]$message.message } }
   }
 }
@@ -1041,8 +832,19 @@ function Expand-Panel([System.Drawing.Image]$image, [string]$imageBase64) {
     [System.Drawing.Point]::new(($script:ballX + 42), ($script:ballY + 42))
   )
   $area = $screen.WorkingArea
-  $maxPanelWidth = [Math]::Max(400, [int]($area.Width * 0.8))
-  $panelWidth = [Math]::Min($maxPanelWidth, [Math]::Max(400, ($image.Width + 48)))
+  $dpiScale = 1.0
+  try {
+    $dpiGraphics = $script:panelForm.CreateGraphics()
+    try { $dpiScale = $dpiGraphics.DpiX / 96.0 } finally { $dpiGraphics.Dispose() }
+  } catch { }
+  if ($dpiScale -lt 1.0) { $dpiScale = 1.0 }
+  $script:dpiScale = $dpiScale
+  $minPanelWidth = [int](440 * $dpiScale)
+  $maxPanelWidth = [int](560 * $dpiScale)
+  $screenCap = [int]($area.Width * 0.8)
+  if ($maxPanelWidth -gt $screenCap) { $maxPanelWidth = $screenCap }
+  if ($maxPanelWidth -lt $minPanelWidth) { $minPanelWidth = $maxPanelWidth }
+  $panelWidth = [Math]::Min($maxPanelWidth, [Math]::Max($minPanelWidth, ($image.Width + 48)))
   $script:panelWidth = $panelWidth
 
   $panelX = $script:ballX + $script:ballSize - $panelWidth
@@ -1057,7 +859,7 @@ function Expand-Panel([System.Drawing.Image]$image, [string]$imageBase64) {
     Update-Ball
   }
 
-  $initialHeight = [Math]::Min([int]($area.Height * 0.7), 560)
+  $initialHeight = [Math]::Min([int]($area.Height * 0.7), [int](640 * $dpiScale))
   $panelY = $script:ballY + 82
   if (($panelY + $initialHeight) -gt $area.Bottom - 8) {
     $panelY = $area.Bottom - 8 - $initialHeight
@@ -1112,7 +914,6 @@ function Collapse-Panel([switch]$Immediate) {
   if ($null -eq $script:panelForm) { return }
   Stop-PanelReveal
   Stop-PanelAnimation
-  Hide-PanelControls
   Clear-PreviewData
   $script:panelVisible = $false
   if ($Immediate) {
@@ -1124,10 +925,6 @@ function Collapse-Panel([switch]$Immediate) {
   Start-PanelAnimation $from 64 {
     $script:panelForm.Hide()
     Hide-Shadow
-    if (-not [string]::IsNullOrEmpty($script:toastAfterCollapse)) {
-      Show-Toast $script:toastAfterCollapse
-      $script:toastAfterCollapse = ''
-    }
   }
 }
 
@@ -1570,8 +1367,7 @@ try {
   $web.Add_CoreWebView2InitializationCompleted({
     param($sender, $e)
     if (-not $e.IsSuccess) {
-      Write-Log ('webview init failed: ' + $e.InitializationException)
-      [Console]::Error.WriteLine('WebView2 initialization failed: ' + $e.InitializationException)
+      Show-WebViewHint ([string]$e.InitializationException)
       return
     }
     $core = $sender.CoreWebView2
@@ -1584,12 +1380,6 @@ try {
     $core.Settings.AreBrowserAcceleratorKeysEnabled = $false
     $core.Add_WebMessageReceived({
       param($sender, $eventArgs)
-      try {
-        [System.IO.File]::AppendAllText(
-          (Join-Path ([System.IO.Path]::GetTempPath()) 'glance-msg.log'),
-          [string]$eventArgs.WebMessageAsJson + [Environment]::NewLine,
-          [System.Text.UTF8Encoding]::new($false))
-      } catch { }
       Handle-PanelMessage ([string]$eventArgs.WebMessageAsJson)
     })
     $core.Navigate($script:panelUri)
@@ -1600,16 +1390,21 @@ try {
     if ($script:webStarted) { return }
     $script:webStarted = $true
     try {
-      $userDataFolder = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ScreenSnap\WebView2'
-      New-Item -ItemType Directory -Force -Path $userDataFolder | Out-Null
+      $userDataFolder = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'dsh-glance\WebView2'
+      try {
+        New-Item -ItemType Directory -Force -Path $userDataFolder | Out-Null
+      } catch {
+        $userDataFolder = Join-Path (Join-Path ([System.IO.Path]::GetTempPath()) 'dsh-glance') 'WebView2'
+        New-Item -ItemType Directory -Force -Path $userDataFolder | Out-Null
+        Write-Log ('webview user data fallback: ' + $userDataFolder)
+      }
       $environment = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $userDataFolder, $null).GetAwaiter().GetResult()
       $script:webEnvironment = $environment
       $null = $script:web.Handle
       $script:web.EnsureCoreWebView2Async($environment)
       Write-Log 'webview ensure called'
     } catch {
-      Write-Log ('WebView2 startup failed: ' + $_.Exception.Message)
-      [Console]::Error.WriteLine('WebView2 startup failed: ' + $_.Exception.ToString())
+      Show-WebViewHint ($_.Exception.ToString())
     }
   })
   $panelForm.Hide()
@@ -1619,8 +1414,7 @@ try {
   $ballForm.TopMost = $true
   $ballForm.BringToFront()
 
-  [Console]::Out.WriteLine('{"type":"ready"}')
-  [Console]::Out.Flush()
+  Send-HostMessage @{ type = 'ready' }
   Write-Log 'widget ready printed'
 
   Start-HostReader

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -25,37 +25,56 @@ export function apply(ctx) {
   };
   const scriptPath = fileURLToPath(new URL('./widget.ps1', import.meta.url));
   const packageDir = dirname(scriptPath);
-  const statePath = join(packageDir, 'state.json');
+  const stateDir = join(
+    process.env.LOCALAPPDATA || join(tmpdir(), 'dsh-glance'),
+    'dsh-glance'
+  );
+  const statePath = join(stateDir, 'state.json');
+  const legacyStatePath = join(packageDir, 'state.json');
   const ANALYSIS_TITLE = '一瞥';
+  const ANALYSIS_TIMEOUT_MS = 180000;
 
   let analysisSessionId;
-  let analysisNamed = false;
   let analysisTitle = '';
   let analysisCwd;
   let stateLoaded = false;
   let widget;
   let deliveryQueue = Promise.resolve();
+  let activeRun;
+
+  async function readStateFile(path) {
+    try {
+      const parsed = JSON.parse(await readFile(path, 'utf8'));
+      if (parsed && typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
+        return parsed;
+      }
+    } catch {
+      /* Missing, unreadable or malformed: treat as no state. */
+    }
+    return undefined;
+  }
 
   async function loadState() {
     if (stateLoaded) return;
     stateLoaded = true;
-    try {
-      const parsed = JSON.parse(await readFile(statePath, 'utf8'));
-      if (parsed && typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
-        analysisSessionId = parsed.sessionId;
-        analysisNamed = parsed.named === true;
-        analysisTitle = typeof parsed.title === 'string' ? parsed.title : '';
-      }
-    } catch {
-      /* First run, or an unreadable state file: start clean. */
+    let parsed = await readStateFile(statePath);
+    let migrated = false;
+    if (!parsed) {
+      parsed = await readStateFile(legacyStatePath);
+      migrated = Boolean(parsed);
     }
+    if (!parsed) return;
+    analysisSessionId = parsed.sessionId;
+    analysisTitle = typeof parsed.title === 'string' ? parsed.title : '';
+    if (migrated) await persistState();
   }
 
   async function persistState() {
     try {
+      await mkdir(stateDir, { recursive: true });
       await writeFile(
         statePath,
-        JSON.stringify({ sessionId: analysisSessionId, named: analysisNamed, title: analysisTitle }),
+        JSON.stringify({ sessionId: analysisSessionId, title: analysisTitle }),
         'utf8'
       );
     } catch {
@@ -68,19 +87,18 @@ export function apply(ctx) {
     if (analysisSessionId) {
       try {
         await ctx.sessionController.inspect(analysisSessionId, AbortSignal.timeout(5000));
-        return analysisSessionId;
+        return { sessionId: analysisSessionId, created: false };
       } catch {
         analysisSessionId = undefined;
-        analysisNamed = false;
       }
     }
     const cwd = analysisCwd || ctx.workingDirectory.defaultDirectory || process.cwd();
     const created = await ctx.sessionController.create({ cwd });
     analysisSessionId = created.sessionId;
-    analysisNamed = false;
+    analysisTitle = '';
     await persistState();
     logger.info(`created analysis session ${analysisSessionId} in ${cwd}`);
-    return analysisSessionId;
+    return { sessionId: analysisSessionId, created: true };
   }
 
   function sendToWidget(message) {
@@ -106,7 +124,13 @@ export function apply(ctx) {
       .join('');
   }
 
-  async function streamReply(sessionId) {
+  function combineSignals(signal, timeoutMs) {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeout]);
+    return signal;
+  }
+
+  async function streamReply(sessionId, run) {
     let sawText = false;
     let finished = false;
     const finish = () => {
@@ -121,12 +145,22 @@ export function apply(ctx) {
       logHost('fail ' + String(message || '分析失败'));
       sendToWidget({ type: 'analysis-error', message: String(message || '分析失败') });
     };
+    const interrupted = (fallback) => {
+      if (run && run.stoppedByUser) {
+        if (finished) return;
+        finished = true;
+        logHost('stopped');
+        sendToWidget({ type: 'analysis-stopped' });
+        return;
+      }
+      fail(fallback);
+    };
 
     logHost('follow-start ' + sessionId);
     try {
       const stream = ctx.sessionController.follow(
         { address: { kind: 'session', sessionId }, assistantStream: true },
-        AbortSignal.timeout(180000)
+        combineSignals(run.controller.signal, ANALYSIS_TIMEOUT_MS)
       );
       for await (const frame of stream) {
         if (!frame || typeof frame !== 'object') continue;
@@ -149,7 +183,7 @@ export function apply(ctx) {
           }
           if (inner.type === 'end') {
             if (inner.outcome && inner.outcome.kind === 'committed') continue;
-            fail('分析被中断');
+            interrupted('分析被中断');
             break;
           }
           continue;
@@ -188,7 +222,7 @@ export function apply(ctx) {
               reason.kind === 'interrupted' ||
               reason.kind === 'blocked'
             ) {
-              fail('分析被中断');
+              interrupted('分析被中断');
               break;
             }
           }
@@ -196,10 +230,75 @@ export function apply(ctx) {
       }
       if (!finished) {
         if (sawText) finish();
-        else fail('分析没有返回内容，请检查网络或模型状态后重试。');
+        else interrupted('分析没有返回内容，请检查网络或模型状态后重试。');
       }
     } catch (error) {
-      fail(error && error.message ? error.message : String(error));
+      interrupted(error && error.message ? error.message : String(error));
+    }
+  }
+
+  async function runTurn(content, label) {
+    const run = { controller: new AbortController(), stoppedByUser: false };
+    activeRun = run;
+    try {
+      let lastError;
+      let sessionId;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (run.stoppedByUser) break;
+        const hadSession = Boolean(analysisSessionId);
+        try {
+          const ensured = await ensureAnalysisSession();
+          sessionId = ensured.sessionId;
+          if (ensured.created && hadSession) {
+            logger.info('analysis session was recreated; context reset');
+            sendToWidget({ type: 'session-reset' });
+          }
+          await ctx.sessionController.prompt(
+            {
+              requestId: randomUUID(),
+              sessionId,
+              mode: 'queue',
+              content
+            },
+            combineSignals(run.controller.signal, 30000)
+          );
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+          logger.warn(
+            `prompt attempt ${attempt + 1} failed: ${error && error.message ? error.message : String(error)}`
+          );
+        }
+      }
+
+      if (run.stoppedByUser) {
+        logHost('stopped before stream');
+        sendToWidget({ type: 'analysis-stopped' });
+        return;
+      }
+
+      if (lastError || !sessionId) {
+        const text = lastError && lastError.message ? lastError.message : String(lastError);
+        logger.warn(`${label} delivery failed: ${text}`);
+        sendToWidget({ type: 'analysis-error', message: `发送失败：${text}` });
+        return;
+      }
+
+      if (analysisTitle !== ANALYSIS_TITLE) {
+        try {
+          await ctx.sessionController.rename({ sessionId, title: ANALYSIS_TITLE });
+          analysisTitle = ANALYSIS_TITLE;
+          await persistState();
+        } catch {
+          /* The automatic session title is acceptable. */
+        }
+      }
+
+      logger.info(`delivered ${label} to ${sessionId}`);
+      await streamReply(sessionId, run);
+    } finally {
+      if (activeRun === run) activeRun = undefined;
     }
   }
 
@@ -226,42 +325,30 @@ export function apply(ctx) {
       { type: 'image', mediaType: 'image/png', data: imageBase64, name: 'screenshot.png' },
       { type: 'text', text: prompt }
     ];
+    await runTurn(content, 'capture');
+  }
 
-    let lastError;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const sessionId = await ensureAnalysisSession();
-        await ctx.sessionController.prompt(
-          {
-            requestId: randomUUID(),
-            sessionId,
-            mode: 'queue',
-            content
-          },
-          AbortSignal.timeout(30000)
-        );
-        if (analysisTitle !== ANALYSIS_TITLE) {
-          try {
-            await ctx.sessionController.rename({ sessionId, title: ANALYSIS_TITLE });
-            analysisNamed = true;
-            analysisTitle = ANALYSIS_TITLE;
-            await persistState();
-          } catch {
-            /* The automatic session title is acceptable. */
-          }
-        }
-        logger.info(`delivered capture to ${sessionId}`);
-        await streamReply(sessionId);
-        return;
-      } catch (error) {
-        lastError = error;
-        analysisSessionId = undefined;
-        analysisNamed = false;
-      }
+  /** Follow-up questions reuse the analysis session, so the screenshot is not re-sent. */
+  async function deliverFollowup(text) {
+    const value = typeof text === 'string' ? text.trim() : '';
+    if (!value) return;
+    if (!analysisSessionId) {
+      sendToWidget({ type: 'analysis-error', message: '会话已失效，请重新框选一次。' });
+      return;
     }
-    const messageText = lastError && lastError.message ? lastError.message : String(lastError);
-    logger.warn(`capture delivery failed: ${messageText}`);
-    sendToWidget({ type: 'analysis-error', message: `发送失败：${messageText}` });
+    await runTurn([{ type: 'text', text: value }], 'followup');
+  }
+
+  function stopAnalysis() {
+    const run = activeRun;
+    if (!run) return false;
+    run.stoppedByUser = true;
+    try {
+      run.controller.abort();
+    } catch {
+      /* Already aborted. */
+    }
+    return true;
   }
 
   function startWidget() {
@@ -362,6 +449,18 @@ export function apply(ctx) {
             .catch((error) =>
               logger.warn(`deliver: ${error && error.message ? error.message : String(error)}`)
             );
+          return;
+        }
+        if (message.type === 'followup' && typeof message.text === 'string') {
+          deliveryQueue = deliveryQueue
+            .then(() => deliverFollowup(message.text))
+            .catch((error) =>
+              logger.warn(`followup: ${error && error.message ? error.message : String(error)}`)
+            );
+          return;
+        }
+        if (message.type === 'abort') {
+          if (!stopAnalysis()) sendToWidget({ type: 'analysis-stopped' });
         }
       });
     }
