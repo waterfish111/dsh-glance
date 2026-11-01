@@ -108,6 +108,8 @@
   .icon-btn:hover { background: rgba(255, 255, 255, 0.12); color: var(--text); }
   .icon-btn:active { background: rgba(255, 255, 255, 0.18); }
   .icon-btn.close:hover { background: rgba(232, 74, 90, 0.9); color: #fff; }
+  .icon-btn.custom { color: var(--accent); }
+  .icon-btn.custom:hover { background: rgba(77, 163, 255, 0.18); color: var(--accent); }
   .icon-btn svg { width: 17px; height: 17px; }
 
   /* ---------- content ---------- */
@@ -392,6 +394,14 @@
       <span class="brand-name">一瞥</span>
     </div>
     <div class="title-actions">
+      <button class="icon-btn" id="skin" title="更换悬浮球图片" aria-label="更换悬浮球图片">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.8 2-1.9 0-.5-.2-.9-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1 .9-1.9 1.9-1.9h1.1A5 5 0 0 0 21 9.6C21 5.8 17 3 12 3z" />
+          <circle cx="7.7" cy="11.6" r="1.05" />
+          <circle cx="11" cy="7.7" r="1.05" />
+          <circle cx="15.3" cy="9.3" r="1.05" />
+        </svg>
+      </button>
       <button class="icon-btn" id="minimize" title="最小化" aria-label="最小化">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <path d="M6 12h12" />
@@ -471,8 +481,21 @@
     stop: document.getElementById('stop'),
     rescan: document.getElementById('rescan'),
     minimize: document.getElementById('minimize'),
+    skin: document.getElementById('skin'),
     close: document.getElementById('close')
   };
+
+  var PALETTE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.8 2-1.9 0-.5-.2-.9-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1 .9-1.9 1.9-1.9h1.1A5 5 0 0 0 21 9.6C21 5.8 17 3 12 3z"/><circle cx="7.7" cy="11.6" r="1.05"/><circle cx="11" cy="7.7" r="1.05"/><circle cx="15.3" cy="9.3" r="1.05"/></svg>';
+  var RESET_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.6-5.9"/><path d="M4 4v4.4h4.4"/></svg>';
+
+  function updateSkinButton() {
+    if (!els.skin) return;
+    var title = state.custom ? '恢复默认外观' : '更换悬浮球图片';
+    els.skin.title = title;
+    els.skin.setAttribute('aria-label', title);
+    els.skin.classList.toggle('custom', Boolean(state.custom));
+    els.skin.innerHTML = state.custom ? RESET_ICON : PALETTE_ICON;
+  }
 
   var state = {
     text: '',
@@ -481,6 +504,7 @@
     busy: false,
     hasImage: false,
     sent: false,
+    custom: false,
     lastHeight: 0,
     maxHeight: 9999,
     stick: true
@@ -685,6 +709,8 @@
     if (msg && typeof msg.maxWidth === 'number' && msg.maxWidth > 400) {
       document.documentElement.style.setProperty('--max-width', Math.floor(msg.maxWidth) + 'px');
     }
+    state.custom = Boolean(msg && msg.custom);
+    updateSkinButton();
     scheduleMeasure();
   }
 
@@ -751,6 +777,10 @@
       if (!msg || !msg.type) return;
       switch (msg.type) {
         case 'init': onInit(msg); break;
+        case 'skin-state':
+          state.custom = Boolean(msg && msg.custom);
+          updateSkinButton();
+          break;
         case 'capture': onCapture(msg); break;
         case 'analysis-delta': onDelta(msg); break;
         case 'analysis-replace': onReplace(msg); break;
@@ -773,6 +803,7 @@
   });
 
   els.minimize.addEventListener('click', function () { post({ type: 'minimize' }); });
+  els.skin.addEventListener('click', function () { post({ type: 'skin' }); });
   els.close.addEventListener('click', function () { post({ type: 'close' }); });
   els.rescan.addEventListener('click', function () { post({ type: 'rescan' }); });
 

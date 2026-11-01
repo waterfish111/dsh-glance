@@ -27,6 +27,8 @@ using System.Runtime.InteropServices;
 public static class ScreenSnapDpi {
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
 }
 "@
 
@@ -166,11 +168,15 @@ $script:ballForm = $null
 $script:ballX = 0
 $script:ballY = 0
 $script:ballSize = 84
-$script:ballMargin = 8
-$script:ballWindow = 100
-$script:ballWindowHeight = 100
+$script:ballMargin = 13
+$script:ballWindow = 110
+$script:ballWindowHeight = 110
 $script:ballHover = $false
 $script:ballDrag = $null
+$script:ballImage = $null
+$script:ballImageStream = $null
+$script:ballImageScaled = $null
+$script:ballImagePath = ''
 $script:shadowForm = $null
 $script:shadowMargin = 18
 $script:panelForm = $null
@@ -229,12 +235,19 @@ function New-RoundedPath([int]$x, [int]$y, [int]$width, [int]$height, [int]$radi
   return $path
 }
 
-function Draw-WidgetIcon([System.Drawing.Graphics]$graphics, [int]$size) {
+function Draw-WidgetIcon {
+  param(
+    [System.Drawing.Graphics]$graphics,
+    [int]$size,
+    [System.Drawing.Color]$color = [System.Drawing.Color]::FromArgb(255, 77, 163, 255),
+    [double]$weight = 0.045,
+    [System.Drawing.Color]$dotColor = [System.Drawing.Color]::FromArgb(255, 77, 163, 255)
+  )
   $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $accent = [System.Drawing.Color]::FromArgb(77, 163, 255)
-  $penWidth = [single]([Math]::Max(2.0, $size * 0.045))
+  $accent = $color
+  $penWidth = [single]([Math]::Max(1.6, $size * $weight))
   $pen = [System.Drawing.Pen]::new($accent, $penWidth)
-  $dot = [System.Drawing.SolidBrush]::new($accent)
+  $dot = [System.Drawing.SolidBrush]::new($dotColor)
   try {
     $radius = [single]($size * 0.18)
     $center = [single]($size / 2)
@@ -264,49 +277,253 @@ function New-BallBitmap {
   try {
     $graphics.Clear([System.Drawing.Color]::Transparent)
     $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 
-    for ($i = 0; $i -lt 4; $i++) {
-      $alpha = 20 - ($i * 4)
-      if ($alpha -lt 4) { $alpha = 4 }
-      $shadow = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb($alpha, 0, 0, 0))
-      try {
-        $graphics.FillEllipse(
-          $shadow,
-          ($script:ballMargin - $i),
-          ($script:ballMargin + 2 + $i),
-          ($script:ballSize + 2 * $i),
-          ($script:ballSize + 2 * $i)
-        )
-      } finally {
-        $shadow.Dispose()
-      }
-    }
-
-    $background = [System.Drawing.Color]::FromArgb(30, 36, 48)
-    if ($script:ballHover) { $background = [System.Drawing.Color]::FromArgb(42, 52, 70) }
-    $fill = [System.Drawing.SolidBrush]::new($background)
-    try {
-      $graphics.FillEllipse($fill, $script:ballMargin, $script:ballMargin, ($script:ballSize - 1), ($script:ballSize - 1))
-    } finally {
-      $fill.Dispose()
-    }
-    $border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(58, 70, 94), 1.4)
-    try {
-      $graphics.DrawEllipse($border, $script:ballMargin, $script:ballMargin, ($script:ballSize - 1), ($script:ballSize - 1))
-    } finally {
-      $border.Dispose()
-    }
-
-    $graphics.TranslateTransform($script:ballMargin, $script:ballMargin)
-    try {
-      Draw-WidgetIcon $graphics $script:ballSize
-    } finally {
-      $graphics.ResetTransform()
+    if ($null -ne $script:ballImage) {
+      $custom = Get-CustomBallBitmap
+      if ($null -ne $custom) { $graphics.DrawImageUnscaled($custom, 0, 0) }
+    } else {
+      Draw-DefaultBall $graphics
     }
   } finally {
     $graphics.Dispose()
   }
   return $bitmap
+}
+
+function Draw-DefaultBall([System.Drawing.Graphics]$graphics) {
+  $size = $script:ballSize
+  $margin = $script:ballMargin
+  if ($size -le 0) { return }
+  $radius = [single]($size / 2)
+  $centerX = [single]($margin + $radius)
+  $centerY = [single]($margin + $radius)
+
+  for ($i = 18; $i -ge 1; $i--) {
+    $maxR = [single](($script:ballWindow / 2) - 1)
+    $inner = [single]($radius * 1.02)
+    $rr = $inner + (($maxR - $inner) * ($i / 18.0))
+    if ($rr -gt $maxR) { $rr = $maxR }
+    $shadow = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(4, 0, 0, 0))
+    try {
+      $graphics.FillEllipse($shadow, ($centerX - $rr), ($centerY - $rr + ($radius * 0.10)), ($rr * 2), ($rr * 2))
+    } finally {
+      $shadow.Dispose()
+    }
+  }
+
+  $bodyRect = [System.Drawing.RectangleF]::new($margin, $margin, ($size - 1), ($size - 1))
+  $top = [System.Drawing.Color]::FromArgb(255, 52, 62, 84)
+  $bottom = [System.Drawing.Color]::FromArgb(255, 20, 25, 36)
+  if ($script:ballHover) {
+    $top = [System.Drawing.Color]::FromArgb(255, 66, 78, 104)
+    $bottom = [System.Drawing.Color]::FromArgb(255, 28, 34, 48)
+  }
+  $gradient = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
+    $bodyRect,
+    $top,
+    $bottom,
+    [System.Drawing.Drawing2D.LinearGradientMode]::ForwardDiagonal
+  )
+  try {
+    $graphics.FillEllipse($gradient, $bodyRect)
+  } finally {
+    $gradient.Dispose()
+  }
+
+  $inset = [single]($size * 0.09)
+  $hiRect = [System.Drawing.RectangleF]::new(
+    ($margin + $inset),
+    ($margin + $inset),
+    ($size - 1 - 2 * $inset),
+    ($size - 1 - 2 * $inset)
+  )
+  $highlight = [System.Drawing.Pen]::new(
+    [System.Drawing.Color]::FromArgb(48, 255, 255, 255),
+    [single]([Math]::Max(1.0, $size * 0.020))
+  )
+  try {
+    $graphics.DrawEllipse($highlight, $hiRect)
+  } finally {
+    $highlight.Dispose()
+  }
+
+  $border = [System.Drawing.Pen]::new(
+    [System.Drawing.Color]::FromArgb(255, 74, 88, 116),
+    [single]([Math]::Max(1.0, $size * 0.0175))
+  )
+  try {
+    $graphics.DrawEllipse($border, $bodyRect)
+  } finally {
+    $border.Dispose()
+  }
+
+  $graphics.TranslateTransform($margin, $margin)
+  try {
+    Draw-WidgetIcon $graphics $size ([System.Drawing.Color]::FromArgb(255, 238, 244, 255)) 0.048 ([System.Drawing.Color]::FromArgb(255, 108, 186, 255))
+  } finally {
+    $graphics.ResetTransform()
+  }
+}
+
+function Get-CustomBallBitmap {
+  if ($null -ne $script:ballImageScaled) { return $script:ballImageScaled }
+  $image = $script:ballImage
+  if ($null -eq $image) { return $null }
+
+  $size = $script:ballSize
+  $margin = $script:ballMargin
+  if ($size -le 0) { return $null }
+
+  $bitmap = [System.Drawing.Bitmap]::new(
+    $script:ballWindow,
+    $script:ballWindowHeight,
+    [System.Drawing.Imaging.PixelFormat]::Format32bppPArgb
+  )
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  try {
+    $graphics.Clear([System.Drawing.Color]::Transparent)
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+
+    $radius = [single]($size / 2)
+    $centerX = [single]($margin + $radius)
+    $centerY = [single]($margin + $radius)
+    $maxR = [single](($script:ballWindow / 2) - 1)
+    for ($i = 18; $i -ge 1; $i--) {
+      $inner = [single]($radius * 1.02)
+      $rr = $inner + (($maxR - $inner) * ($i / 18.0))
+      if ($rr -gt $maxR) { $rr = $maxR }
+      $shadow = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(4, 0, 0, 0))
+      try {
+        $graphics.FillEllipse($shadow, ($centerX - $rr), ($centerY - $rr + ($radius * 0.10)), ($rr * 2), ($rr * 2))
+      } finally {
+        $shadow.Dispose()
+      }
+    }
+
+    $scale = [Math]::Min(($size / [double]$image.Width), ($size / [double]$image.Height))
+    $width = [Math]::Max(1, [int][Math]::Round($image.Width * $scale))
+    $height = [Math]::Max(1, [int][Math]::Round($image.Height * $scale))
+    $x = $margin + [int][Math]::Floor(($size - $width) / 2)
+    $y = $margin + [int][Math]::Floor(($size - $height) / 2)
+    $graphics.DrawImage($image, [System.Drawing.Rectangle]::new($x, $y, $width, $height))
+  } finally {
+    $graphics.Dispose()
+  }
+
+  $script:ballImageScaled = $bitmap
+  return $bitmap
+}
+
+function Get-BallImagePath {
+  if (-not [string]::IsNullOrEmpty($script:ballImagePath)) { return $script:ballImagePath }
+  $dir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'dsh-glance'
+  try {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  } catch {
+    $dir = Join-Path (Join-Path ([System.IO.Path]::GetTempPath()) 'dsh-glance')
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  $script:ballImagePath = Join-Path $dir 'ball.png'
+  return $script:ballImagePath
+}
+
+function Set-BallImageFree {
+  if ($null -ne $script:ballImageScaled) {
+    $script:ballImageScaled.Dispose()
+    $script:ballImageScaled = $null
+  }
+  if ($null -ne $script:ballImage) {
+    $script:ballImage.Dispose()
+    $script:ballImage = $null
+  }
+  if ($null -ne $script:ballImageStream) {
+    $script:ballImageStream.Dispose()
+    $script:ballImageStream = $null
+  }
+}
+
+function Load-BallImage {
+  Set-BallImageFree
+  $path = Get-BallImagePath
+  if (-not (Test-Path -LiteralPath $path)) { return $false }
+  try {
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $stream = [System.IO.MemoryStream]::new($bytes, $false)
+    $image = [System.Drawing.Image]::FromStream($stream)
+    $script:ballImageStream = $stream
+    $script:ballImage = $image
+    return $true
+  } catch {
+    Set-BallImageFree
+    Write-Log ('ball image load failed: ' + $_.Exception.Message)
+    return $false
+  }
+}
+
+function Send-PanelSkinState {
+  Send-PanelMessage @{ type = 'skin-state'; custom = ($null -ne $script:ballImage) }
+}
+
+function Select-BallImage {
+  $dialog = [System.Windows.Forms.OpenFileDialog]::new()
+  try {
+    $dialog.Title = '选择悬浮球图片（建议 PNG，带透明背景）'
+    $dialog.Filter = '图片 (*.png;*.webp;*.bmp;*.jpg;*.jpeg)|*.png;*.webp;*.bmp;*.jpg;*.jpeg'
+    $dialog.CheckFileExists = $true
+    $dialog.Multiselect = $false
+    $owner = $script:panelForm
+    if ($null -ne $owner -and $owner.Visible) {
+      $result = $dialog.ShowDialog($owner)
+    } else {
+      $result = $dialog.ShowDialog()
+    }
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $source = $dialog.FileName
+    if ([string]::IsNullOrEmpty($source)) { return }
+    $target = Get-BallImagePath
+    if (-not [string]::Equals($source, $target, [System.StringComparison]::OrdinalIgnoreCase)) {
+      [System.IO.File]::WriteAllBytes($target, [System.IO.File]::ReadAllBytes($source))
+    }
+    if (-not (Load-BallImage)) {
+      [System.Windows.Forms.MessageBox]::Show(
+        '这张图片无法读取，换一张 PNG 试试。',
+        '一瞥',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+      ) | Out-Null
+      return
+    }
+    Update-Ball
+    Send-PanelSkinState
+    Write-Log ('ball image set from ' + $source)
+  } catch {
+    Write-Log ('ball image set failed: ' + $_.Exception.Message)
+    [System.Windows.Forms.MessageBox]::Show(
+      ('设置悬浮球外观失败：' + $_.Exception.Message),
+      '一瞥',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    ) | Out-Null
+  } finally {
+    $dialog.Dispose()
+  }
+}
+
+function Reset-BallImage {
+  $path = Get-BallImagePath
+  try {
+    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+  } catch {
+    Write-Log ('ball image remove failed: ' + $_.Exception.Message)
+  }
+  Set-BallImageFree
+  Update-Ball
+  Send-PanelSkinState
+  Write-Log 'ball image reset'
 }
 
 function Update-Ball {
@@ -324,6 +541,63 @@ function Update-Ball {
   }
 }
 
+function Get-PanelPlacement([System.Drawing.Rectangle]$area, [int]$width, [int]$height) {
+  $gap = 12
+  $pad = 8
+  $left = $area.Left + $pad
+  $top = $area.Top + $pad
+  $right = $area.Right - $pad
+  $bottom = $area.Bottom - $pad
+
+  $ballX = $script:ballX
+  $ballY = $script:ballY
+  $size = $script:ballSize
+
+  if (($ballX + $size) -gt $right) { $ballX = $right - $size }
+  if ($ballX -lt $left) { $ballX = $left }
+  if (($ballY + $size) -gt $bottom) { $ballY = $bottom - $size }
+  if ($ballY -lt $top) { $ballY = $top }
+
+  $candidates = @(
+    @{ x = ($ballX - $gap - $width); y = $ballY },
+    @{ x = ($ballX + $size - $width); y = ($ballY + $size + $gap) },
+    @{ x = ($ballX + $size - $width); y = ($ballY - $gap - $height) }
+  )
+
+  $chosen = $null
+  foreach ($candidate in $candidates) {
+    if ($candidate.x -lt $left) { continue }
+    if (($candidate.x + $width) -gt $right) { continue }
+    if ($candidate.y -lt $top) { continue }
+    if (($candidate.y + $height) -gt $bottom) { continue }
+    $chosen = $candidate
+    break
+  }
+
+  if ($null -eq $chosen) {
+    $x = [Math]::Min([Math]::Max($left, ($ballX + $size - $width)), ($right - $width))
+    $y = $ballY + $size + $gap
+    if (($y + $height) -gt $bottom) {
+      $y = $bottom - $height
+      $ballY = $y - $gap - $size
+      if ($ballY -lt $top) {
+        $ballY = $top
+        $y = $ballY + $size + $gap
+      }
+      if (($y + $height) -gt $bottom) { $y = $bottom - $height }
+      if ($y -lt $top) { $y = $top }
+    }
+    $chosen = @{ x = $x; y = $y }
+  }
+
+  return @{
+    x = [int]$chosen.x
+    y = [int]$chosen.y
+    ballX = [int]$ballX
+    ballY = [int]$ballY
+  }
+}
+
 function Move-PanelToBall {
   if ($null -eq $script:panelForm -or -not $script:panelForm.Visible) { return }
   $screen = [System.Windows.Forms.Screen]::FromPoint(
@@ -331,36 +605,15 @@ function Move-PanelToBall {
   )
   $area = $screen.WorkingArea
 
-  if ($script:ballY -lt $area.Top + 8) {
-    $script:ballY = $area.Top + 8
+  $placement = Get-PanelPlacement $area $script:panelWidth $script:panelForm.Height
+  if ($placement.ballX -ne $script:ballX -or $placement.ballY -ne $script:ballY) {
+    $script:ballX = $placement.ballX
+    $script:ballY = $placement.ballY
     Update-Ball
   }
 
-  $panelX = $script:ballX + $script:ballSize - $script:panelWidth
-  if ($panelX -lt $area.Left + 8) {
-    $panelX = $area.Left + 8
-    $script:ballX = $panelX + $script:panelWidth - $script:ballSize
-    Update-Ball
-  }
-  if ($panelX + $script:panelWidth -gt $area.Right - 8) {
-    $panelX = $area.Right - 8 - $script:panelWidth
-    $script:ballX = $panelX + $script:panelWidth - $script:ballSize
-    Update-Ball
-  }
-
-  $panelY = $script:ballY + 82
-  if ($panelY + $script:panelForm.Height -gt $area.Bottom - 8) {
-    $panelY = $area.Bottom - 8 - $script:panelForm.Height
-    $script:ballY = $panelY - 82
-    if ($script:ballY -lt $area.Top + 8) {
-      $script:ballY = $area.Top + 8
-      $panelY = $script:ballY + 82
-    }
-    Update-Ball
-  }
-
-  $script:panelX = $panelX
-  $script:panelY = $panelY
+  $script:panelX = $placement.x
+  $script:panelY = $placement.y
   $script:panelForm.Bounds = [System.Drawing.Rectangle]::new(
     $script:panelX,
     $script:panelY,
@@ -640,6 +893,7 @@ function Send-PanelInit {
     type = 'init'
     maxHeight = [int]($maxHeightDip / $scale)
     maxWidth = [int]($maxWidthDip / $scale)
+    custom = ($null -ne $script:ballImage)
   }
 }
 
@@ -681,6 +935,28 @@ function Send-Abort {
   Send-HostMessage @{ type = 'abort' }
 }
 
+function Move-BallClearOfPanel([System.Drawing.Rectangle]$rect) {
+  if ($null -eq $script:ballForm) { return }
+  $size = $script:ballSize
+  $ball = [System.Drawing.Rectangle]::new($script:ballX, $script:ballY, $size, $size)
+  if (-not $ball.IntersectsWith($rect)) { return }
+  $gap = 12
+  $screen = [System.Windows.Forms.Screen]::FromPoint(
+    [System.Drawing.Point]::new(($rect.Left + 10), ($rect.Top + 10))
+  )
+  $area = $screen.WorkingArea
+  $above = $rect.Top - $gap - $size
+  $below = $rect.Bottom + $gap
+  if ($above -ge $area.Top + 8) {
+    $script:ballY = $above
+  } elseif (($below + $size) -le $area.Bottom - 8) {
+    $script:ballY = $below
+  } else {
+    return
+  }
+  Update-Ball
+}
+
 function Set-PanelHeight([int]$value) {
   if ($null -eq $script:panelForm -or -not $script:panelVisible) { return }
   $screen = [System.Windows.Forms.Screen]::FromPoint(
@@ -709,6 +985,7 @@ function Set-PanelHeight([int]$value) {
     $script:panelWidth,
     $target
   )
+  Move-BallClearOfPanel ([System.Drawing.Rectangle]::new($script:panelX, $top, $script:panelWidth, $target))
   Set-PanelRegion
   Update-Shadow $script:panelWidth $target
 }
@@ -736,6 +1013,9 @@ function Handle-PanelMessage([string]$json) {
     }
     'stop' {
       Send-Abort
+    }
+    'skin' {
+      if ($null -ne $script:ballImage) { Reset-BallImage } else { Select-BallImage }
     }
     'drag' {
       if ($null -ne $script:panelForm) {
@@ -847,27 +1127,13 @@ function Expand-Panel([System.Drawing.Image]$image, [string]$imageBase64) {
   $panelWidth = [Math]::Min($maxPanelWidth, [Math]::Max($minPanelWidth, ($image.Width + 48)))
   $script:panelWidth = $panelWidth
 
-  $panelX = $script:ballX + $script:ballSize - $panelWidth
-  if ($panelX -lt $area.Left + 8) {
-    $panelX = $area.Left + 8
-    $script:ballX = $panelX + $panelWidth - $script:ballSize
-    Update-Ball
-  }
-  if (($panelX + $panelWidth) -gt $area.Right - 8) {
-    $panelX = $area.Right - 8 - $panelWidth
-    $script:ballX = $panelX + $panelWidth - $script:ballSize
-    Update-Ball
-  }
-
   $initialHeight = [Math]::Min([int]($area.Height * 0.7), [int](640 * $dpiScale))
-  $panelY = $script:ballY + 82
-  if (($panelY + $initialHeight) -gt $area.Bottom - 8) {
-    $panelY = $area.Bottom - 8 - $initialHeight
-    $script:ballY = $panelY - 82
-    if ($script:ballY -lt $area.Top + 8) {
-      $script:ballY = $area.Top + 8
-      $panelY = $script:ballY + 82
-    }
+  $placement = Get-PanelPlacement $area $panelWidth $initialHeight
+  $panelX = $placement.x
+  $panelY = $placement.y
+  if ($placement.ballX -ne $script:ballX -or $placement.ballY -ne $script:ballY) {
+    $script:ballX = $placement.ballX
+    $script:ballY = $placement.ballY
     Update-Ball
   }
   if ($panelY -lt $area.Top + 8) { $panelY = $area.Top + 8 }
@@ -1232,6 +1498,7 @@ function Toggle-Ball {
 }
 
 try {
+  $null = Load-BallImage
   [System.Windows.Forms.Application]::EnableVisualStyles()
   [System.Windows.Forms.Application]::SetUnhandledExceptionMode(
     [System.Windows.Forms.UnhandledExceptionMode]::CatchException
@@ -1246,6 +1513,17 @@ try {
       [System.Windows.Forms.MessageBoxIcon]::Error
     ) | Out-Null
   })
+
+  $ballDpi = 96
+  try { $ballDpi = [int][ScreenSnapDpi]::GetDpiForSystem() } catch { }
+  if ($ballDpi -lt 96) { $ballDpi = 96 }
+  $ballScale = $ballDpi / 96.0
+  $script:ballSize = [int][Math]::Round(84 * $ballScale)
+  $script:ballMargin = [int][Math]::Round($script:ballSize * 0.15)
+  $script:ballWindow = $script:ballSize + 2 * $script:ballMargin
+  $script:ballWindowHeight = $script:ballWindow
+  $script:ballImageScaled = $null
+  Write-Log ('ball dpi=' + $ballDpi + ' size=' + $script:ballSize)
 
   $workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
   $script:ballX = $workingArea.Right - 96 - $script:ballSize
