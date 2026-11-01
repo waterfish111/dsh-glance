@@ -4,6 +4,20 @@
   "private": true,
   "type": "module",
   "description": "一瞥 / Glance：置顶悬浮球 + 框选任意屏幕区域 + 多模态流式分析。",
+  "license": "MIT",
+  "author": "water fish",
+  "homepage": "https://github.com/waterfish111/dsh-glance",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/waterfish111/dsh-glance.git"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "screenshot",
+    "vision",
+    "webview2"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -19,7 +33,10 @@
     "webview2/*.dll",
     "webview2/LICENSE.txt",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {

@@ -2,7 +2,7 @@
 
 一个 DSH Desktop 本地插件：在主页面打开开关后，屏幕上出现一个置顶悬浮球；框选任意应用中的区域，截图会直接发给多模态模型，分析结果在悬浮面板里流式显示。
 
-仓库：https://github.com/waterfish111/dsh-glance
+仓库：https://github.com/waterfish111/dsh-glance ｜ 许可证：[MIT](LICENSE) ｜ 更新日志：[CHANGELOG.md](CHANGELOG.md)
 
 > 状态：`0.4.1`，可用的早期版本（工作原型）。本轮重做了悬浮球外观（柔光立体 + 放大镜图标）、按 DPI 缩放，并支持换成自己的图片。
 
@@ -28,9 +28,15 @@
 ## 安装
 
 1. 把本目录放到任意位置（不要放在需要管理员权限的目录）。
-2. 在 DSH 中把该目录作为本地 bundle 安装（`plugin_manager install_bundle`，或用 DSH 的插件管理界面安装本地插件）。
-3. 启用「一瞥」插件，刷新 Harness 页面。
-4. 主页面右上角出现「一瞥」开关。
+2. 用 DSH 的插件管理界面把这个目录作为本地插件安装。手动等价做法是在 profile 目录里把它加成链接依赖，并确认加载列表里有它：
+
+   ```powershell
+   dsh plugin --profile desktop add 'link:D:/dsh/dsh-glance'
+   ```
+
+   然后打开 `%USERPROFILE%\.dsh\profiles\desktop\package.json`，确认 `dsh.profile.bundles` 数组里包含 `"@local/dsh-glance"`（没有就手动加一行）。**只写进 dependencies 不会加载**，bundles 才是实际的层列表。
+3. 重启 DSH Desktop；主页面右上角出现「一瞥」开关。
+4. 卸载：`dsh plugin --profile desktop remove @local/dsh-glance`，并从 `dsh.profile.bundles` 里删掉那一行。
 
 ## 使用
 
@@ -40,7 +46,7 @@
 4. 点击「发送」，分析结果会流式显示在「分析结果」区域；此时按钮变成「追问」，并出现「停止」。
 5. 继续输入并点「追问」只会发送文字，截图不会重复上传；需要重新取画面时点「重新框选」。
 6. 关闭：在 Harness 主页面关闭开关；面板右上角 × 只收起面板，悬浮球保留。
-7. 换外观：点面板标题栏的调色板按钮，选一张 PNG/WebP/GIF 图片（建议带透明背景、512×512 以上）作为悬浮球；按钮变成 ↺ 后可一键恢复默认外观。
+7. 换外观：点面板标题栏的调色板按钮，选一张图片（建议 PNG、带透明背景、512×512 以上；也支持 WebP / BMP / JPG）作为悬浮球；按钮变成 ↺ 后可一键恢复默认外观。
 
 ## 目录结构
 
@@ -51,6 +57,7 @@
 - `webview2/` — vendored WebView2 SDK（Core / WinForms / Loader，Microsoft 许可见 `webview2/LICENSE.txt`）
 - `cordis.patch.yml`、`package.json` — DSH bundle 声明
 - `locale/`、`icon.svg` — 文案与图标
+- `CHANGELOG.md`、`LICENSE`、`.gitattributes` — 版本记录、MIT 许可证、换行约定（`*.ps1` 固定 CRLF 检出，避免 BOM/换行被改坏）
 - `backup/`（未入库）— 历史样式备份与截图
 
 ## 已知限制
@@ -76,10 +83,12 @@
 
 ## 版本
 
+完整历史见 [CHANGELOG.md](CHANGELOG.md)。
+
 - `0.4.1` — 悬浮球重做：柔光立体外观 + 白色放大镜图标，尺寸按系统 DPI 缩放（此前固定 84 物理像素，高缩放下偏小）；支持上传自己的图片作为悬浮球外观，可一键恢复默认；面板改为贴在悬浮球左侧（放不下时依次退到球下、球上），不再被悬浮球挡住右上角的关闭按钮。
 - `0.4.0` — 追问与首次发送分离（不再重传截图）；新增「停止」；会话失效与重建时在面板提示；状态文件移到 `%LOCALAPPDATA%\dsh-glance\`；删除约 250 行死代码；WebView2 缺失时弹窗提示安装；面板宽高统一按 DPI 换算（宽度限制在 440–560 DIP，不再随截图变宽），窄面板下输入框与按钮分行排列，预览图按面板宽度铺满。
 - `0.3.0` — 改名「一瞥 / Glance」；WebView2 面板、流式分析、断网错误、通用化截图分析。
 
 ## 第三方
 
-WebView2 SDK 版权与许可见 `webview2/LICENSE.txt`。本仓库自身代码的开源许可证尚未确定。
+WebView2 SDK 版权与许可见 `webview2/LICENSE.txt`。本仓库自身代码以 MIT 许可证发布，见 [LICENSE](LICENSE)。
