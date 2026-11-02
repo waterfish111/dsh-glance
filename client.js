@@ -35,9 +35,49 @@ window.__ModuleLoader__.load({
     let translate = (key) => key;
     let sessionsService;
 
-    // The button is a launcher: it never claims to know whether the widget is
-    // still alive, it only remembers that this page started it. Clicking again
-    // re-runs the command, which is a no-op when the widget is already up.
+    const STATUS_URL = '/api/local/dsh-glance/status';
+    const POLL_MS = 2000;
+
+    // The widget lives in the host process, so the page cannot learn about it
+    // by itself: ask the host periodically instead of guessing from a click.
+    async function refreshRunning() {
+      try {
+        const response = await window.fetch(STATUS_URL, { cache: 'no-store' });
+        if (!response || !response.ok) return;
+        const data = await response.json();
+        if (data && data.ok === true) setStore({ running: Boolean(data.running) });
+      } catch {
+        /* Host route missing or offline; keep the last known value. */
+      }
+    }
+
+    let pollTimer = null;
+    let pollRefs = 0;
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') refreshRunning();
+    }
+
+    function startPolling() {
+      pollRefs += 1;
+      if (pollTimer === null) {
+        refreshRunning();
+        pollTimer = window.setInterval(refreshRunning, POLL_MS);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+      }
+      return () => {
+        pollRefs -= 1;
+        if (pollRefs > 0) return;
+        pollRefs = 0;
+        if (pollTimer !== null) window.clearInterval(pollTimer);
+        pollTimer = null;
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+      };
+    }
+
+    // The button is a launcher: it starts the widget and never claims to be a
+    // switch. Its "running" mark mirrors the host, so closing the widget from
+    // the ball's own menu clears it here too.
     const store = { sessionId: null, busy: false, running: false, error: '' };
     const listeners = new Set();
 
@@ -90,6 +130,8 @@ window.__ModuleLoader__.load({
         };
       }, [sessionId]);
 
+      React.useEffect(() => startPolling(), []);
+
       const start = async () => {
         if (busy || !sessionId) return;
         let binding;
@@ -107,16 +149,18 @@ window.__ModuleLoader__.load({
           const result = await binding.session.command('/glance on');
           const matched = Boolean(result && result.ok === true && result.value && result.value.matched);
           if (!matched) {
-            setStore({ busy: false, running: false, error: t('error.command') });
+            setStore({ busy: false, error: t('error.command') });
+            await refreshRunning();
             return;
           }
           setStore({ busy: false, running: true, error: '' });
+          await refreshRunning();
         } catch (error) {
           setStore({
             busy: false,
-            running: false,
             error: error && error.message ? error.message : t('error.command')
           });
+          await refreshRunning();
         }
       };
 

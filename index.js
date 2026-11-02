@@ -12,7 +12,8 @@ export const inject = [
   'sessions',
   'sessionController',
   'subprocess',
-  'workingDirectory'
+  'workingDirectory',
+  'webServer'
 ];
 
 export function apply(ctx) {
@@ -580,6 +581,30 @@ export function apply(ctx) {
       return { kind: 'error', text: '用法：/glance on | off | status' };
     }
   });
+
+  if (ctx.webServer && typeof ctx.webServer.register === 'function') {
+    ctx.effect(() =>
+      ctx.webServer.register({
+        kind: 'exact',
+        path: '/api/local/dsh-glance/status',
+        handler: async (request, response) => {
+          if (request.method !== 'GET' && request.method !== 'HEAD') {
+            response.writeHead(405, { 'content-type': 'application/json; charset=utf-8' });
+            response.end(JSON.stringify({ ok: false, error: 'method-not-allowed' }));
+            return;
+          }
+          const running = Boolean(widget && !widget.exited);
+          response.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store'
+          });
+          response.end(JSON.stringify({ ok: true, running }));
+        }
+      })
+    );
+  } else {
+    logger.warn('webServer service unavailable; the titlebar button cannot follow the widget state');
+  }
 
   ctx.effect(() => () => {
     stopWidget();

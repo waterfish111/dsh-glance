@@ -203,7 +203,7 @@ public class ScreenSnapMenuRenderer : ToolStripProfessionalRenderer {
         Graphics g = e.Graphics;
         SmoothingMode previous = g.SmoothingMode;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        RectangleF rect = new RectangleF(3f * scale, 2f * scale, e.Item.Width - 6f * scale, e.Item.Height - 4f * scale);
+        RectangleF rect = new RectangleF(3f * scale, 3f * scale, e.Item.Width - 6f * scale, e.Item.Height - 6f * scale);
         using (GraphicsPath path = RoundedRect(rect, 7f * scale))
         using (SolidBrush brush = new SolidBrush(Color.FromArgb(58, 76, 141, 255))) {
             g.FillPath(brush, path);
@@ -211,9 +211,16 @@ public class ScreenSnapMenuRenderer : ToolStripProfessionalRenderer {
         g.SmoothingMode = previous;
     }
     protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) {
-        Color target = e.Item.Enabled ? e.Item.ForeColor : Color.FromArgb(118, 128, 148);
-        e.TextColor = e.Item.Selected ? Color.FromArgb(255, 255, 255) : target;
-        base.OnRenderItemText(e);
+        Color color = !e.Item.Enabled
+            ? Color.FromArgb(118, 128, 148)
+            : (e.Item.Selected ? Color.FromArgb(255, 255, 255) : e.Item.ForeColor);
+        int left = Math.Max(e.TextRectangle.X, (int)(20f * scale));
+        int right = (int)(16f * scale);
+        int width = Math.Max(e.Item.Width - left - right, 30);
+        Rectangle box = new Rectangle(left, 0, width, e.Item.Height);
+        TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+            TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, box, color, flags);
     }
     protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e) {
         Graphics g = e.Graphics;
@@ -251,6 +258,7 @@ $script:pendingBallAction = $null
 $script:ballActionTimer = $null
 $script:ballMenuActions = $null
 $script:ballMenuResetItem = $null
+$script:ballMenuScale = 0.0
 $script:ballImage = $null
 $script:ballImageStream = $null
 $script:ballImageScaled = $null
@@ -609,8 +617,10 @@ function New-BallMenuEntry([string]$text, [bool]$enabled, [scriptblock]$onClick)
   $item.Enabled = $enabled
   $item.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
   $item.AutoSize = $true
-  $padY = [int](5 * $script:dpiScale)
-  $item.Padding = [System.Windows.Forms.Padding]::new([int](14 * $script:dpiScale), $padY, [int](18 * $script:dpiScale), $padY)
+  $padX = [int](20 * $script:dpiScale)
+  $padTop = [int](1 * $script:dpiScale)
+  $padBottom = [int](1 * $script:dpiScale)
+  $item.Padding = [System.Windows.Forms.Padding]::new($padX, $padTop, 0, $padBottom)
   if ($null -ne $onClick) {
     if ($null -eq $script:ballMenuActions) { $script:ballMenuActions = @{} }
     $script:ballMenuActions[$item] = $onClick
@@ -648,9 +658,15 @@ function Invoke-BallMenuAction([scriptblock]$action) {
 }
 
 function Get-BallMenu {
-  if ($null -ne $script:ballMenu) { return $script:ballMenu }
   $scale = $script:dpiScale
   if ($null -eq $scale -or $scale -le 0) { $scale = 1.0 }
+  if ($null -ne $script:ballMenu) {
+    if ([Math]::Abs($script:ballMenuScale - $scale) -lt 0.01) { return $script:ballMenu }
+    Write-Log ('ball menu rebuild scale ' + $script:ballMenuScale + ' -> ' + $scale)
+    try { $script:ballMenu.Dispose() } catch { }
+    $script:ballMenu = $null
+    $script:ballMenuResetItem = $null
+  }
   $script:ballMenuActions = @{}
 
   $menu = [System.Windows.Forms.ContextMenuStrip]::new()
@@ -659,16 +675,16 @@ function Get-BallMenu {
   $menu.DropShadowEnabled = $true
   $menu.BackColor = [System.Drawing.Color]::FromArgb(27, 33, 48)
   $menu.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
-  $menu.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', [float](9.0 * $scale))
+  $menu.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', [float](8.5 * $scale))
   $menu.Renderer = [ScreenSnapMenuRenderer]::new([ScreenSnapMenuColors]::new(), [float]$scale)
-  $edge = [int](5 * $scale)
+  $edge = [int](4 * $scale)
   $menu.Padding = [System.Windows.Forms.Padding]::new($edge, $edge, $edge, $edge)
 
-  $menu.Items.Add((New-BallMenuEntry '更换悬浮球图片…' $true { Select-BallImage })) | Out-Null
+  $menu.Items.Add((New-BallMenuEntry '更换外观…' $true { Select-BallImage })) | Out-Null
   $script:ballMenuResetItem = New-BallMenuEntry '恢复默认外观' $false { Reset-BallImage }
   $menu.Items.Add($script:ballMenuResetItem) | Out-Null
   $menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new()) | Out-Null
-  $menu.Items.Add((New-BallMenuEntry '关闭一瞥' $true { Close-Widget })) | Out-Null
+  $menu.Items.Add((New-BallMenuEntry '退出' $true { Close-Widget })) | Out-Null
 
   $menu.Add_Closed({ OnBallMenuClosed })
   $menu.Add_Opened({
@@ -688,6 +704,7 @@ function Get-BallMenu {
     }
   })
   $script:ballMenu = $menu
+  $script:ballMenuScale = $scale
   return $menu
 }
 
@@ -1732,6 +1749,7 @@ try {
   try { $ballDpi = [int][ScreenSnapDpi]::GetDpiForSystem() } catch { }
   if ($ballDpi -lt 96) { $ballDpi = 96 }
   $ballScale = $ballDpi / 96.0
+  $script:dpiScale = $ballScale
   $script:ballSize = [int][Math]::Round(84 * $ballScale)
   $script:ballMargin = [int][Math]::Round($script:ballSize * 0.15)
   $script:ballWindow = $script:ballSize + 2 * $script:ballMargin

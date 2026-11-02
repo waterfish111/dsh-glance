@@ -86,7 +86,31 @@ const ctx = {
         done: new Promise(() => {})
       }
     }
+  },
+  webServer: {
+    register(route) {
+      ctx.statusRoute = route
+      return () => {}
+    }
   }
+}
+
+// Drives the registered status route and returns its JSON body.
+async function readStatus() {
+  const route = ctx.statusRoute
+  if (!route) return undefined
+  const captured = {}
+  const response = {
+    status: 0,
+    writeHead(status) {
+      captured.status = status
+    },
+    end(body) {
+      captured.body = body
+    }
+  }
+  await route.handler({ method: 'GET' }, response)
+  return captured
 }
 
 const failures = []
@@ -101,11 +125,25 @@ function check(label, condition, detail) {
 
 apply(ctx)
 
+const idleStatus = await readStatus()
+check(
+  'status route reports idle before start',
+  idleStatus !== undefined && idleStatus.status === 200 && JSON.parse(idleStatus.body).running === false,
+  idleStatus
+)
+
 const startPromise = ctx.commandHandler({ rawInput: '/glance on', agent: { id: 'agent-1' } })
 await new Promise((resolve) => setTimeout(resolve, 30))
 ctx.emit({ type: 'ready' })
 const start = await startPromise
 check('widget starts', start.ok !== false && start.kind !== 'error', start)
+
+const runningStatus = await readStatus()
+check(
+  'status route reports running after start',
+  runningStatus !== undefined && JSON.parse(runningStatus.body).running === true,
+  runningStatus
+)
 
 ctx.emit({ type: 'capture', imageBase64: 'AAAA', note: '这是什么' })
 await new Promise((resolve) => setTimeout(resolve, 80))
