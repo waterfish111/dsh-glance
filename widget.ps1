@@ -196,6 +196,7 @@ $script:ballMenu = $null
 $script:pendingBallAction = $null
 $script:ballActionTimer = $null
 $script:ballMenuActions = $null
+$script:ballMenuResetItem = $null
 $script:ballImage = $null
 $script:ballImageStream = $null
 $script:ballImageScaled = $null
@@ -568,20 +569,22 @@ function New-BallMenuEntry([string]$text, [bool]$enabled, [scriptblock]$onClick)
 }
 
 function Invoke-BallMenuAction([scriptblock]$action) {
-  if ($null -ne $script:ballMenu) {
-    try { $script:ballMenu.Close() } catch { }
-  }
   if ($null -eq $action -or $null -eq $script:ballForm) { return }
   $script:pendingBallAction = $action
+  if ($null -ne $script:ballActionTimer) { return }
   $timer = [System.Windows.Forms.Timer]::new()
-  $timer.Interval = 60
+  $timer.Interval = 80
   $timer.Add_Tick({
     param($sender, $e)
     $sender.Stop()
+    try { $sender.Dispose() } catch { }
     $script:ballActionTimer = $null
+    $menu = $script:ballMenu
+    if ($null -ne $menu) {
+      try { if ($menu.Visible) { $menu.Close() } } catch { }
+    }
     $pending = $script:pendingBallAction
     $script:pendingBallAction = $null
-    try { $sender.Dispose() } catch { }
     if ($null -ne $pending) {
       try { & $pending } catch { Write-Log ('menu action failed: ' + $_.Exception.Message) }
     }
@@ -590,7 +593,8 @@ function Invoke-BallMenuAction([scriptblock]$action) {
   $timer.Start()
 }
 
-function New-BallMenu {
+function Get-BallMenu {
+  if ($null -ne $script:ballMenu) { return $script:ballMenu }
   $scale = $script:dpiScale
   if ($null -eq $scale -or $scale -le 0) { $scale = 1.0 }
   $script:ballMenuActions = @{}
@@ -605,37 +609,41 @@ function New-BallMenu {
   $menu.Renderer = [System.Windows.Forms.ToolStripProfessionalRenderer]::new([ScreenSnapMenuColors]::new())
 
   $menu.Items.Add((New-BallMenuEntry '更换悬浮球图片…' $true { Select-BallImage })) | Out-Null
-  $hasCustom = ($null -ne $script:ballImage)
-  $menu.Items.Add((New-BallMenuEntry '恢复默认外观' $hasCustom { Reset-BallImage })) | Out-Null
+  $script:ballMenuResetItem = New-BallMenuEntry '恢复默认外观' $false { Reset-BallImage }
+  $menu.Items.Add($script:ballMenuResetItem) | Out-Null
   $menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new()) | Out-Null
-  $menu.Items.Add((New-BallMenuEntry '重新框选' $true { Toggle-Ball })) | Out-Null
   $menu.Items.Add((New-BallMenuEntry '关闭一瞥' $true { Close-Widget })) | Out-Null
+
+  $menu.Add_Closed({ OnBallMenuClosed })
+  $script:ballMenu = $menu
   return $menu
 }
 
-function Close-BallMenu {
+function OnBallMenuClosed {
   $script:menuOpen = $false
-  $menu = $script:ballMenu
-  $script:ballMenu = $null
-  if ($null -ne $menu) {
-    try { $menu.Dispose() } catch { }
-  }
-  if ($null -ne $script:ballForm) {
+  try {
+    if ($null -eq $script:ballForm) { return }
     $cursor = [System.Windows.Forms.Cursor]::Position
     $left = $script:ballX + $script:ballMargin
     $top = $script:ballY + $script:ballMargin
     $script:ballHover = ($cursor.X -ge $left -and $cursor.X -le ($left + $script:ballSize) -and
       $cursor.Y -ge $top -and $cursor.Y -le ($top + $script:ballSize))
     Update-Ball
+  } catch {
+    Write-Log ('ball menu close failed: ' + $_.Exception.Message)
   }
 }
 
 function Show-BallMenu {
   if ($null -eq $script:ballForm) { return }
-  if ($script:menuOpen) { return }
-  $menu = $null
+  $existing = $script:ballMenu
+  if ($null -ne $existing -and $existing.Visible) { return }
+  $script:menuOpen = $false
   try {
-    $menu = New-BallMenu
+    $menu = Get-BallMenu
+    if ($null -ne $script:ballMenuResetItem) {
+      $script:ballMenuResetItem.Enabled = ($null -ne $script:ballImage)
+    }
     $size = $menu.GetPreferredSize([System.Drawing.Size]::Empty)
     $center = [System.Drawing.Point]::new(
       [int]($script:ballX + $script:ballSize / 2),
@@ -651,16 +659,12 @@ function Show-BallMenu {
     if ($y -lt ($area.Top + $gap)) { $y = $area.Top + $gap }
 
     $script:menuOpen = $true
-    $script:ballMenu = $menu
-    $menu.Add_Closed({ Close-BallMenu })
     $menu.Show([System.Drawing.Point]::new($x, $y))
     [ScreenSnapNative]::SetForegroundWindow($menu.Handle) | Out-Null
     Write-Log ('ball menu opened at ' + $x + ',' + $y)
   } catch {
-    Write-Log ('ball menu failed: ' + $_.Exception.Message)
     $script:menuOpen = $false
-    $script:ballMenu = $null
-    if ($null -ne $menu) { try { $menu.Dispose() } catch { } }
+    Write-Log ('ball menu failed: ' + $_.Exception.Message)
   }
 }
 
