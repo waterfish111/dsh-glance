@@ -67,6 +67,7 @@ public static class ScreenSnapNative {
     static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
 
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hWnd);
@@ -162,6 +163,23 @@ public class ScreenSnapShadowForm : Form {
         }
     }
 }
+
+public class ScreenSnapMenuColors : ProfessionalColorTable {
+    static readonly Color Background = Color.FromArgb(27, 33, 48);
+    static readonly Color Line = Color.FromArgb(46, 55, 74);
+    static readonly Color Hover = Color.FromArgb(52, 76, 141, 255);
+    public override Color ToolStripDropDownBackground { get { return Background; } }
+    public override Color ImageMarginGradientBegin { get { return Background; } }
+    public override Color ImageMarginGradientMiddle { get { return Background; } }
+    public override Color ImageMarginGradientEnd { get { return Background; } }
+    public override Color MenuBorder { get { return Line; } }
+    public override Color MenuItemBorder { get { return Hover; } }
+    public override Color MenuItemSelected { get { return Hover; } }
+    public override Color MenuItemSelectedGradientBegin { get { return Hover; } }
+    public override Color MenuItemSelectedGradientEnd { get { return Hover; } }
+    public override Color SeparatorDark { get { return Color.FromArgb(62, 74, 98); } }
+    public override Color SeparatorLight { get { return Background; } }
+}
 "@
 
 $script:ballForm = $null
@@ -173,6 +191,11 @@ $script:ballWindow = 110
 $script:ballWindowHeight = 110
 $script:ballHover = $false
 $script:ballDrag = $null
+$script:menuOpen = $false
+$script:ballMenu = $null
+$script:pendingBallAction = $null
+$script:ballActionTimer = $null
+$script:ballMenuActions = $null
 $script:ballImage = $null
 $script:ballImageStream = $null
 $script:ballImageScaled = $null
@@ -524,6 +547,121 @@ function Reset-BallImage {
   Update-Ball
   Send-PanelSkinState
   Write-Log 'ball image reset'
+}
+
+function New-BallMenuEntry([string]$text, [bool]$enabled, [scriptblock]$onClick) {
+  $item = [System.Windows.Forms.ToolStripMenuItem]::new($text)
+  $item.Enabled = $enabled
+  $item.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
+  $item.AutoSize = $true
+  $padY = [int](6 * $script:dpiScale)
+  $item.Padding = [System.Windows.Forms.Padding]::new([int](10 * $script:dpiScale), $padY, [int](14 * $script:dpiScale), $padY)
+  if ($null -ne $onClick) {
+    if ($null -eq $script:ballMenuActions) { $script:ballMenuActions = @{} }
+    $script:ballMenuActions[$item] = $onClick
+    $item.Add_Click({
+      param($sender, $e)
+      Invoke-BallMenuAction $script:ballMenuActions[$sender]
+    })
+  }
+  return $item
+}
+
+function Invoke-BallMenuAction([scriptblock]$action) {
+  if ($null -ne $script:ballMenu) {
+    try { $script:ballMenu.Close() } catch { }
+  }
+  if ($null -eq $action -or $null -eq $script:ballForm) { return }
+  $script:pendingBallAction = $action
+  $timer = [System.Windows.Forms.Timer]::new()
+  $timer.Interval = 60
+  $timer.Add_Tick({
+    param($sender, $e)
+    $sender.Stop()
+    $script:ballActionTimer = $null
+    $pending = $script:pendingBallAction
+    $script:pendingBallAction = $null
+    try { $sender.Dispose() } catch { }
+    if ($null -ne $pending) {
+      try { & $pending } catch { Write-Log ('menu action failed: ' + $_.Exception.Message) }
+    }
+  })
+  $script:ballActionTimer = $timer
+  $timer.Start()
+}
+
+function New-BallMenu {
+  $scale = $script:dpiScale
+  if ($null -eq $scale -or $scale -le 0) { $scale = 1.0 }
+  $script:ballMenuActions = @{}
+
+  $menu = [System.Windows.Forms.ContextMenuStrip]::new()
+  $menu.ShowImageMargin = $false
+  $menu.ShowCheckMargin = $false
+  $menu.DropShadowEnabled = $true
+  $menu.BackColor = [System.Drawing.Color]::FromArgb(27, 33, 48)
+  $menu.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
+  $menu.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', [float](9.0 * $scale))
+  $menu.Renderer = [System.Windows.Forms.ToolStripProfessionalRenderer]::new([ScreenSnapMenuColors]::new())
+
+  $menu.Items.Add((New-BallMenuEntry '更换悬浮球图片…' $true { Select-BallImage })) | Out-Null
+  $hasCustom = ($null -ne $script:ballImage)
+  $menu.Items.Add((New-BallMenuEntry '恢复默认外观' $hasCustom { Reset-BallImage })) | Out-Null
+  $menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new()) | Out-Null
+  $menu.Items.Add((New-BallMenuEntry '重新框选' $true { Toggle-Ball })) | Out-Null
+  $menu.Items.Add((New-BallMenuEntry '关闭一瞥' $true { Close-Widget })) | Out-Null
+  return $menu
+}
+
+function Close-BallMenu {
+  $script:menuOpen = $false
+  $menu = $script:ballMenu
+  $script:ballMenu = $null
+  if ($null -ne $menu) {
+    try { $menu.Dispose() } catch { }
+  }
+  if ($null -ne $script:ballForm) {
+    $cursor = [System.Windows.Forms.Cursor]::Position
+    $left = $script:ballX + $script:ballMargin
+    $top = $script:ballY + $script:ballMargin
+    $script:ballHover = ($cursor.X -ge $left -and $cursor.X -le ($left + $script:ballSize) -and
+      $cursor.Y -ge $top -and $cursor.Y -le ($top + $script:ballSize))
+    Update-Ball
+  }
+}
+
+function Show-BallMenu {
+  if ($null -eq $script:ballForm) { return }
+  if ($script:menuOpen) { return }
+  $menu = $null
+  try {
+    $menu = New-BallMenu
+    $size = $menu.GetPreferredSize([System.Drawing.Size]::Empty)
+    $center = [System.Drawing.Point]::new(
+      [int]($script:ballX + $script:ballSize / 2),
+      [int]($script:ballY + $script:ballSize / 2)
+    )
+    $area = [System.Windows.Forms.Screen]::FromPoint($center).WorkingArea
+    $gap = [int](4 * $script:dpiScale)
+    $x = $script:ballX + $script:ballSize + $gap
+    $y = $script:ballY
+    if (($x + $size.Width) -gt ($area.Right - $gap)) { $x = $script:ballX - $size.Width - $gap }
+    if ($x -lt ($area.Left + $gap)) { $x = $area.Left + $gap }
+    if (($y + $size.Height) -gt ($area.Bottom - $gap)) { $y = $area.Bottom - $gap - $size.Height }
+    if ($y -lt ($area.Top + $gap)) { $y = $area.Top + $gap }
+
+    $script:menuOpen = $true
+    $script:ballMenu = $menu
+    $menu.Add_Closed({ Close-BallMenu })
+    $menu.Show([System.Drawing.Point]::new($x, $y))
+    [ScreenSnapNative]::SetForegroundWindow($menu.Handle) | Out-Null
+    Write-Log ('ball menu opened at ' + $x + ',' + $y)
+  } catch {
+    Write-Log ('ball menu failed: ' + $_.Exception.Message)
+    $script:menuOpen = $false
+    $script:ballMenu = $null
+    if ($null -ne $menu) { try { $menu.Dispose() } catch { } }
+  }
 }
 
 function Update-Ball {
@@ -1580,6 +1718,10 @@ try {
 
   $ballForm.Add_MouseUp({
     param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+      Show-BallMenu
+      return
+    }
     if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
     $drag = $script:ballDrag
     $script:ballDrag = $null
@@ -1592,16 +1734,16 @@ try {
 
   $ballForm.Add_MouseEnter({
     $script:ballHover = $true
-    if ($null -eq $script:ballDrag) { Update-Ball }
+    if ($null -eq $script:ballDrag -and -not $script:menuOpen) { Update-Ball }
   })
   $ballForm.Add_MouseLeave({
     $script:ballHover = $false
-    if ($null -eq $script:ballDrag) { Update-Ball }
+    if ($null -eq $script:ballDrag -and -not $script:menuOpen) { Update-Ball }
   })
 
 
   $script:tooltip = [System.Windows.Forms.ToolTip]::new()
-  $script:tooltip.SetToolTip($ballForm, '点击框选屏幕区域；点我收起面板')
+  $script:tooltip.SetToolTip($ballForm, '左键框选屏幕区域；右键设置外观；拖动可移动位置')
 
   $panelForm = [ScreenSnapMainForm]::new()
   $panelForm.Text = '一瞥'
