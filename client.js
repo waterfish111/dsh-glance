@@ -5,24 +5,27 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
 
     const NS = 'glance';
-    const ENABLED_KEY = 'dsh-glance.enabled';
 
     const DICTS = {
       en: {
-        'toggle.label': 'Glance',
-        'toggle.on': 'Glance is on. Click to stop the capture widget.',
-        'toggle.off': 'Start the capture widget and send any selected region to the multimodal model.',
-        'toggle.busyText': 'Starting...',
-        'toggle.busy': 'Starting the capture widget...',
+        'button.label': 'Glance',
+        'button.text': 'Glance',
+        'button.running': 'Running',
+        'button.starting': 'Starting…',
+        'button.hintIdle': 'Start the capture widget and send any selected region to the multimodal model.',
+        'button.hintRunning': 'The capture widget is running. Right-click the floating ball to change its look or close it.',
+        'button.hintStarting': 'Starting the capture widget…',
         'error.binding': 'The conversation is not ready yet.',
         'error.command': 'The command could not run. Is the plugin enabled?'
       },
       zh: {
-        'toggle.label': '一瞥',
-        'toggle.on': '一瞥已开启，点击关闭抓屏小部件',
-        'toggle.off': '开启抓屏小部件，框选任意区域交给多模态模型',
-        'toggle.busyText': '启动中…',
-        'toggle.busy': '正在启动抓屏小部件…',
+        'button.label': '一瞥',
+        'button.text': '一瞥',
+        'button.running': '运行中',
+        'button.starting': '启动中…',
+        'button.hintIdle': '启动悬浮球，框选任意区域交给多模态模型。',
+        'button.hintRunning': '悬浮球正在运行；右键悬浮球可更换外观或关闭。',
+        'button.hintStarting': '正在启动悬浮球…',
         'error.binding': '当前会话还未就绪，请稍后再试。',
         'error.command': '命令执行失败，插件可能未启用。'
       }
@@ -32,7 +35,10 @@ window.__ModuleLoader__.load({
     let translate = (key) => key;
     let sessionsService;
 
-    const store = { enabled: false, sessionId: null, busy: false, error: '' };
+    // The button is a launcher: it never claims to know whether the widget is
+    // still alive, it only remembers that this page started it. Clicking again
+    // re-runs the command, which is a no-op when the widget is already up.
+    const store = { sessionId: null, busy: false, running: false, error: '' };
     const listeners = new Set();
 
     function emit() {
@@ -42,22 +48,6 @@ window.__ModuleLoader__.load({
     function setStore(patch) {
       Object.assign(store, patch);
       emit();
-    }
-
-    function readEnabled() {
-      try {
-        return window.localStorage.getItem(ENABLED_KEY) === '1';
-      } catch {
-        return false;
-      }
-    }
-
-    function writeEnabled(value) {
-      try {
-        window.localStorage.setItem(ENABLED_KEY, value ? '1' : '0');
-      } catch {
-        /* Storage is optional; the switch still works for this page. */
-      }
     }
 
     function useStore() {
@@ -72,13 +62,25 @@ window.__ModuleLoader__.load({
       return store;
     }
 
-    function ToggleSwitch(props) {
+    function dotStyle(running, busy) {
+      return {
+        flex: 'none',
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: running ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-state-idle-primary)',
+        opacity: busy ? 0.5 : 1,
+        transition: 'background 150ms ease, opacity 150ms ease'
+      };
+    }
+
+    function GlanceButton(props) {
       const snapshot = useStore();
       const [hovered, setHovered] = React.useState(false);
       const sessionId = props ? props.sessionId : undefined;
       const t = translate;
-      const enabled = snapshot.enabled;
       const busy = snapshot.busy;
+      const running = snapshot.running;
 
       React.useEffect(() => {
         if (!sessionId) return undefined;
@@ -88,7 +90,7 @@ window.__ModuleLoader__.load({
         };
       }, [sessionId]);
 
-      const toggle = async () => {
+      const start = async () => {
         if (busy || !sessionId) return;
         let binding;
         try {
@@ -100,20 +102,19 @@ window.__ModuleLoader__.load({
           setStore({ error: t('error.binding') });
           return;
         }
-        const next = !store.enabled;
         setStore({ busy: true, error: '' });
         try {
-          const result = await binding.session.command(`/glance ${next ? 'on' : 'off'}`);
+          const result = await binding.session.command('/glance on');
           const matched = Boolean(result && result.ok === true && result.value && result.value.matched);
           if (!matched) {
-            setStore({ busy: false, error: t('error.command') });
+            setStore({ busy: false, running: false, error: t('error.command') });
             return;
           }
-          writeEnabled(next);
-          setStore({ enabled: next, busy: false, error: '' });
+          setStore({ busy: false, running: true, error: '' });
         } catch (error) {
           setStore({
             busy: false,
+            running: false,
             error: error && error.message ? error.message : t('error.command')
           });
         }
@@ -122,33 +123,31 @@ window.__ModuleLoader__.load({
       const title = snapshot.error
         ? snapshot.error
         : busy
-          ? t('toggle.busy')
-          : enabled
-            ? t('toggle.on')
-            : t('toggle.off');
+          ? t('button.hintStarting')
+          : running
+            ? t('button.hintRunning')
+            : t('button.hintIdle');
 
       return h(
         'button',
         {
           type: 'button',
-          role: 'switch',
-          'aria-checked': enabled,
-          'aria-label': t('toggle.label'),
+          'aria-label': t('button.label'),
           title,
           disabled: busy,
-          onClick: toggle,
+          onClick: start,
           onMouseEnter: () => setHovered(true),
           onMouseLeave: () => setHovered(false),
           style: {
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 7,
+            gap: 6,
             height: 26,
-            padding: '0 8px',
+            padding: '0 9px',
             border: '1px solid ' + (hovered ? 'var(--dsw-alias-border-l1)' : 'transparent'),
             borderRadius: 999,
             background: hovered ? 'var(--dsw-alias-bg-layer-1)' : 'transparent',
-            color: enabled ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+            color: running ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
             font: 'inherit',
             fontSize: 12,
             lineHeight: 1,
@@ -159,35 +158,18 @@ window.__ModuleLoader__.load({
             transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease'
           }
         },
-        h('span', { 'aria-hidden': true }, busy ? t('toggle.busyText') : t('toggle.label')),
-        h(
-          'span',
-          {
-            'aria-hidden': true,
-            style: {
-              position: 'relative',
-              flex: 'none',
-              width: 30,
-              height: 16,
-              borderRadius: 999,
-              background: enabled ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-state-idle-primary)',
-              transition: 'background 150ms ease'
-            }
-          },
-          h('span', {
-            style: {
-              position: 'absolute',
-              top: 2,
-              left: enabled ? 16 : 2,
-              width: 12,
-              height: 12,
-              borderRadius: '50%',
-              background: 'var(--dsw-alias-label-primary)',
-              boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-bg-base) 45%, transparent)',
-              transition: 'left 150ms ease'
-            }
-          })
-        )
+        h('span', { 'aria-hidden': true, style: dotStyle(running, busy) }),
+        h('span', { 'aria-hidden': true }, busy ? t('button.starting') : t('button.text')),
+        running && !busy
+          ? h(
+              'span',
+              {
+                'aria-hidden': true,
+                style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }
+              },
+              t('button.running')
+            )
+          : null
       );
     }
 
@@ -195,7 +177,6 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'sessions', 'locale'],
       apply(ctx) {
         sessionsService = ctx.sessions;
-        store.enabled = readEnabled();
         translate = ctx.locale.bind(NS);
 
         for (const locale of Object.keys(DICTS)) {
@@ -210,9 +191,9 @@ window.__ModuleLoader__.load({
               name: 'conversation.session.header.utilities',
               id: 'glance-toggle',
               order: 20,
-              label: () => translate('toggle.label')
+              label: () => translate('button.label')
             },
-            ToggleSwitch
+            GlanceButton
           )
         );
       }

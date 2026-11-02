@@ -41,6 +41,7 @@ try {
 Add-Type -ReferencedAssemblies 'System.Windows.Forms', 'System.Drawing' -TypeDefinition @"
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -179,6 +180,59 @@ public class ScreenSnapMenuColors : ProfessionalColorTable {
     public override Color MenuItemSelectedGradientEnd { get { return Hover; } }
     public override Color SeparatorDark { get { return Color.FromArgb(62, 74, 98); } }
     public override Color SeparatorLight { get { return Background; } }
+}
+
+public class ScreenSnapMenuRenderer : ToolStripProfessionalRenderer {
+    readonly float scale;
+    public ScreenSnapMenuRenderer(ProfessionalColorTable table, float scale) : base(table) {
+        this.scale = scale <= 0f ? 1f : scale;
+        RoundedEdges = false;
+    }
+    public static GraphicsPath RoundedRect(RectangleF rect, float radius) {
+        GraphicsPath path = new GraphicsPath();
+        float d = radius * 2f;
+        path.AddArc(rect.X, rect.Y, d, d, 180f, 90f);
+        path.AddArc(rect.Right - d, rect.Y, d, d, 270f, 90f);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0f, 90f);
+        path.AddArc(rect.X, rect.Bottom - d, d, d, 90f, 90f);
+        path.CloseFigure();
+        return path;
+    }
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
+        if (!e.Item.Selected || !e.Item.Enabled) return;
+        Graphics g = e.Graphics;
+        SmoothingMode previous = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        RectangleF rect = new RectangleF(3f * scale, 2f * scale, e.Item.Width - 6f * scale, e.Item.Height - 4f * scale);
+        using (GraphicsPath path = RoundedRect(rect, 7f * scale))
+        using (SolidBrush brush = new SolidBrush(Color.FromArgb(58, 76, 141, 255))) {
+            g.FillPath(brush, path);
+        }
+        g.SmoothingMode = previous;
+    }
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) {
+        Color target = e.Item.Enabled ? e.Item.ForeColor : Color.FromArgb(118, 128, 148);
+        e.TextColor = e.Item.Selected ? Color.FromArgb(255, 255, 255) : target;
+        base.OnRenderItemText(e);
+    }
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e) {
+        Graphics g = e.Graphics;
+        float y = e.Item.Height / 2f;
+        using (Pen pen = new Pen(Color.FromArgb(34, 255, 255, 255), 1f)) {
+            g.DrawLine(pen, 13f * scale, y, e.Item.Width - 13f * scale, y);
+        }
+    }
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) {
+        Graphics g = e.Graphics;
+        SmoothingMode previous = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        RectangleF rect = new RectangleF(0.5f, 0.5f, e.ToolStrip.Width - 1f, e.ToolStrip.Height - 1f);
+        using (GraphicsPath path = RoundedRect(rect, 10f * scale))
+        using (Pen pen = new Pen(Color.FromArgb(46, 56, 76), 1f)) {
+            g.DrawPath(pen, path);
+        }
+        g.SmoothingMode = previous;
+    }
 }
 "@
 
@@ -555,8 +609,8 @@ function New-BallMenuEntry([string]$text, [bool]$enabled, [scriptblock]$onClick)
   $item.Enabled = $enabled
   $item.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
   $item.AutoSize = $true
-  $padY = [int](6 * $script:dpiScale)
-  $item.Padding = [System.Windows.Forms.Padding]::new([int](10 * $script:dpiScale), $padY, [int](14 * $script:dpiScale), $padY)
+  $padY = [int](5 * $script:dpiScale)
+  $item.Padding = [System.Windows.Forms.Padding]::new([int](14 * $script:dpiScale), $padY, [int](18 * $script:dpiScale), $padY)
   if ($null -ne $onClick) {
     if ($null -eq $script:ballMenuActions) { $script:ballMenuActions = @{} }
     $script:ballMenuActions[$item] = $onClick
@@ -606,7 +660,9 @@ function Get-BallMenu {
   $menu.BackColor = [System.Drawing.Color]::FromArgb(27, 33, 48)
   $menu.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
   $menu.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', [float](9.0 * $scale))
-  $menu.Renderer = [System.Windows.Forms.ToolStripProfessionalRenderer]::new([ScreenSnapMenuColors]::new())
+  $menu.Renderer = [ScreenSnapMenuRenderer]::new([ScreenSnapMenuColors]::new(), [float]$scale)
+  $edge = [int](5 * $scale)
+  $menu.Padding = [System.Windows.Forms.Padding]::new($edge, $edge, $edge, $edge)
 
   $menu.Items.Add((New-BallMenuEntry '更换悬浮球图片…' $true { Select-BallImage })) | Out-Null
   $script:ballMenuResetItem = New-BallMenuEntry '恢复默认外观' $false { Reset-BallImage }
@@ -615,6 +671,22 @@ function Get-BallMenu {
   $menu.Items.Add((New-BallMenuEntry '关闭一瞥' $true { Close-Widget })) | Out-Null
 
   $menu.Add_Closed({ OnBallMenuClosed })
+  $menu.Add_Opened({
+    param($sender, $e)
+    try {
+      if ($null -eq $sender -or $sender.Width -le 0 -or $sender.Height -le 0) { return }
+      $radius = [float](10 * $script:dpiScale)
+      $rect = [System.Drawing.RectangleF]::new(0, 0, [float]$sender.Width, [float]$sender.Height)
+      $path = [ScreenSnapMenuRenderer]::RoundedRect($rect, $radius)
+      try {
+        $sender.Region = [System.Drawing.Region]::new($path)
+      } finally {
+        $path.Dispose()
+      }
+    } catch {
+      Write-Log ('ball menu region failed: ' + $_.Exception.Message)
+    }
+  })
   $script:ballMenu = $menu
   return $menu
 }

@@ -540,14 +540,14 @@ export function apply(ctx) {
 
   ctx.commands.register({
     name: 'glance',
-    description: '开启或关闭一瞥悬浮窗（框选屏幕任意区域，截图直达多模态模型）',
+    description: '启动一瞥悬浮球（框选屏幕任意区域，截图直达多模态模型）',
     recordInput: false,
     handler: async (invocation) => {
       let raw = String(invocation.rawInput || '').trim();
       raw = raw.replace(/^\/?glance\b\s*/i, '');
       const action = (raw.split(/\s+/)[0] || 'status').toLowerCase();
 
-      if (action === 'on' || action === 'enable') {
+      if (action === 'on' || action === 'start' || action === 'enable') {
         const currentSession = ctx.sessions.get(invocation.agent.id);
         if (currentSession && currentSession.header.cwd) {
           analysisCwd = currentSession.header.cwd;
@@ -560,7 +560,7 @@ export function apply(ctx) {
           kind: 'success',
           text: result.already
             ? '一瞥已在运行。'
-            : '一瞥已开启。点击屏幕上的悬浮圆钮，框选任意区域，截图会直接发给多模态模型。'
+            : '一瞥已启动。点悬浮球框选区域；右键悬浮球可更换外观或关闭。'
         };
       }
 
