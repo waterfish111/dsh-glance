@@ -1,102 +1,226 @@
-# 一瞥 / Glance（DSH 截图分析插件）
+# 一瞥 / Glance
 
-一个 DSH Desktop 本地插件：点会话标题栏的「一瞥」按钮后，屏幕上出现一个置顶悬浮球；框选任意应用中的区域，截图会直接发给多模态模型，分析结果在悬浮面板里流式显示。
+> 屏幕上任何一个角落，框一下，就有一条能追问的 AI 分析线索。
 
-仓库：https://github.com/waterfish111/dsh-glance ｜ 许可证：[MIT](LICENSE) ｜ 更新日志：[CHANGELOG.md](CHANGELOG.md)
+一个 **DSH Desktop 本地插件**。点会话标题栏的「一瞥」，屏幕角落出现一个置顶悬浮球；点球框选任意应用的区域，截图直接发给多模态模型，分析结果在悬浮面板里流式显示，还能就着这张图继续追问。
 
-> 状态：`0.5.1`，可用的早期版本（工作原型）。本轮给悬浮球加了 4 档大小预设，并去掉自定义图片外围那圈黑影。
+![status](https://img.shields.io/badge/status-beta-orange) ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue) ![license](https://img.shields.io/badge/license-MIT-green)
 
-## 功能
+更新日志：[CHANGELOG.md](CHANGELOG.md) ｜ 许可证：[MIT](LICENSE) ｜ 当前版本：`0.5.1`（beta）
 
-- 会话标题栏的「一瞥」启动按钮，点一下出现始终置顶的悬浮球，成功启动后显示「运行中」
-- 悬浮球可拖到屏幕任意位置；右键悬浮球可以直接更换外观、调整大小、恢复默认或退出，不用先截图
-- 外观支持自定义图片（右键菜单，或面板标题栏的调色板按钮）；大小可选小 / 标准 / 大 / 特大，按屏幕缩放自动换算
-- 全屏冻结层 + 框选 HUD，框选时不闪屏
-- WebView2 深色玻璃面板：截图预览、流式分析、补充说明、发送 / 重新框选
-- 截图 + 备注直接发给多模态模型，不做 OCR
-- 追问只发送文字，同一会话里继续对话，不重复上传截图
-- 分析过程中可以「停止」中断本轮；已经生成的部分会留在原地并标注「已停止」
-- 一次框选 = 一条线索：新截图自动开新会话，追问复用同一条；会话标题带时间（如「一瞥 · 11-05 19:32」），方便在 DSH 会话列表里回看
-- 断网、超时、空回答等失败路径会在面板显示错误
+---
 
-## 环境要求
+## 它解决什么问题
 
-- Windows 10/11
-- DSH Desktop（本地 profile 插件）
-- Microsoft Edge WebView2 Runtime（Windows 11 通常自带；Windows 10 如缺失需安装）
-- Windows PowerShell 5.1（`widget.ps1` 依赖，系统自带）
+报错弹窗、公式推导、看不懂的图表、想改的 UI、外语截图——这些时候你要么来回切换窗口复制粘贴，要么截图丢给聊天窗口还得重新描述一遍。
 
-## 安装
+一瞥把这套动作压成两步：**框一下，问一句**。而且它知道你在问哪张图：追问只发文字，不再重传截图。
 
-1. 把本目录放到任意位置（不要放在需要管理员权限的目录）。
-2. 用 DSH 的插件管理界面把这个目录作为本地插件安装。手动等价做法是在 profile 目录里把它加成链接依赖，并确认加载列表里有它：
+它不适合：需要批量 OCR 的文字提取、需要长文档总结的场景、非 Windows 环境。
 
-   ```powershell
-   dsh plugin --profile desktop add 'link:D:/dsh/dsh-glance'
-   ```
+## 快速开始
 
-   然后打开 `%USERPROFILE%\.dsh\profiles\desktop\package.json`，确认 `dsh.profile.bundles` 数组里包含 `"@local/dsh-glance"`（没有就手动加一行）。**只写进 dependencies 不会加载**，bundles 才是实际的层列表。
-3. 重启 DSH Desktop；会话标题栏出现「一瞥」按钮。
-4. 卸载：`dsh plugin --profile desktop remove @local/dsh-glance`，并从 `dsh.profile.bundles` 里删掉那一行。
+### 1. 环境要求
+
+| 项 | 要求 |
+| --- | --- |
+| 系统 | Windows 10 / 11 |
+| 宿主 | DSH Desktop（本地 profile 插件机制） |
+| 运行时 | Microsoft Edge WebView2 Runtime（Win11 通常自带，Win10 可能需手动装） |
+| 脚本 | Windows PowerShell 5.1（系统自带，`widget.ps1` 依赖它） |
+| 模型 | DSH 里配置的默认模型必须支持图片输入 |
+
+### 2. 安装
+
+把仓库放到任意本地目录（不要放在需要管理员权限的位置），然后：
+
+```powershell
+dsh plugin --profile desktop add 'link:D:/path/to/dsh-glance'
+```
+
+打开 `%USERPROFILE%\.dsh\profiles\desktop\package.json`，确认 `dsh.profile.bundles` 数组里有 `"@local/dsh-glance"`，没有就加一行：
+
+```json
+"dsh": { "profile": { "bundles": [ "...", "@local/dsh-glance" ] } }
+```
+
+> **只写进 `dependencies` 不会加载。** `dsh.profile.bundles` 才是决定加载哪些 bundle 的层列表；插件管理器界面做的事本质也是这两步。
+
+重启 DSH Desktop。会话标题栏出现「一瞥」按钮即安装成功。
+
+### 3. 第一次用
+
+1. 点标题栏「一瞥」→ 屏幕出现悬浮球，按钮变成「运行中」
+2. 点悬浮球 → 屏幕冻结，拖出要分析的矩形
+3. 面板里看截图，可写一句补充说明（"这报错什么意思"／"帮我改这个 UI"）
+4. 点「发送」→ 回答流式出现在「分析结果」里
+5. 接着输入 → 按钮变「追问」→ 只发文字，不再重传截图
 
 ## 使用
 
-1. 点会话标题栏的「一瞥」按钮，屏幕上出现悬浮球；按钮会显示「运行中」。
-2. 点击悬浮球，拖动框选要分析的屏幕区域。
-3. 面板中确认截图，可填写补充说明（例如“检查这道题”“解释这个报错”）。
-4. 点击「发送」，分析结果会流式显示在「分析结果」区域；此时按钮变成「追问」，并出现「停止」。
-5. 继续输入并点「追问」只会发送文字，截图不会重复上传；需要重新取画面时点「重新框选」。
-6. 关闭面板：面板右上角 × 只收起面板，悬浮球保留。
-7. 换外观：右键点悬浮球，选「更换外观…」，挑一张图片（建议 PNG、带透明背景、512×512 以上；也支持 WebP / BMP / JPG）。之后右键菜单里「恢复默认外观」可一键还原。同样的按钮也在面板标题栏（调色板 → 变 ↺ 表示已自定义）。自定义图片按原样显示，不再额外加投影。
-8. 退出：右键悬浮球 →「退出」。标题栏按钮会在一两秒内自己变回「一瞥」。也可以 `/glance off` 直接关。
+### 悬浮球
 
-## 目录结构
+| 操作 | 效果 |
+| --- | --- |
+| 左键单击 | 进入框选 |
+| 拖动 | 换位置（不会误触发框选） |
+| 右键单击 | 打开菜单：更换外观 / 恢复默认外观 / 悬浮球大小 / 退出 |
 
-- `index.js` — Host 半：命令、会话、启动/停止小部件、图片 prompt、`sessionController.follow` 流式回传
-- `client.js` — Web 半：主页面开关
-- `widget.ps1` — 原生小部件：悬浮球、冻结框选、WebView2 面板宿主、stdin 读取
-- `panel.html` — WebView2 面板页面（HTML/CSS/JS）
-- `webview2/` — vendored WebView2 SDK（Core / WinForms / Loader，Microsoft 许可见 `webview2/LICENSE.txt`）
-- `cordis.patch.yml`、`package.json` — DSH bundle 声明
-- `locale/`、`icon.svg` — 文案与图标
-- `CHANGELOG.md`、`LICENSE`、`.gitattributes` — 版本记录、MIT 许可证、换行约定（`*.ps1` 固定 CRLF 检出，避免 BOM/换行被改坏）
-- `backup/`（未入库）— 历史样式备份与截图
+「悬浮球大小」有 4 档：小 `72` / 标准 `84` / 大 `96` / 特大 `108`（DIP）。选择立即生效，写进 `settings.json`，下次启动沿用；尺寸跟着屏幕缩放换算，换到高 DPI 屏不会缩水。
+
+### 面板
+
+- **发送 / 追问**：首轮带截图，之后只带文字
+- **停止**：真正中断 Harness 里这一轮（调 `sessionController.cancel`），不只是把面板的流停掉；已生成的部分会留下并标注「已停止」
+- **重新框选**：换一张图，开新的一条线索
+- **标题栏**：调色板 = 换外观（自定义后变 ↺）；— = 收起面板；× = 收起面板（球保留）
+
+一次框选 = 一条线索。新截图自动开新会话，追问复用同一条；会话标题带时间（`一瞥 · 11-05 19:32`），方便事后在 DSH 会话列表里翻回来。同一张图追问到第 6 轮会给一句软提示，提醒你换话题时可以重新框选。
+
+### 命令
+
+| 命令 | 效果 |
+| --- | --- |
+| `/glance` 或 `/glance status` | 查询是否在运行 |
+| `/glance on`（也接受 `start` / `enable`） | 启动悬浮球，幂等 |
+| `/glance off`（也接受 `disable`） | 关闭悬浮球 |
+
+## 工作原理
+
+三个进程/线程，三条单向管道：
+
+```
+DSH 主进程 (index.js)                 widget.ps1 (PowerShell + WinForms)
+  │  stdin  ── {type:"ready"|"capture"|"followup"|"abort"} ──▶ │
+  │  ◀── stdout ── {type:"analysis-delta|replace|done|error"} │
+  │                                    │
+  │                                    │ WebView2 postMessage
+  │                                    ▼
+  │                              panel.html (界面)
+  └──────── HTTP GET /api/local/dsh-glance/status ──▶ client.js (标题栏按钮轮询)
+```
+
+- **Host 半（`index.js`）**：注册 `/glance` 命令与状态路由，起停 `widget.ps1` 子进程，把截图拼成 image prompt 发给专用会话，用 `sessionController.follow` 把流式回答回灌给面板
+- **Widget 半（`widget.ps1`）**：PowerShell 5.1 + WinForms + 内嵌 WebView2。分层窗口画悬浮球（`UpdateLayeredWindow` 逐像素 alpha），全屏冻结层取框选，`panel.html` 跑在 WebView2 里
+- **Web 半（`client.js`）**：往会话标题栏塞一个启动按钮，每 2 秒向宿主查一次真实状态
+
+没有 OCR、没有本地推理：截图以 base64 直接进模型上下文。
+
+## 文件与数据
+
+| 位置 | 内容 |
+| --- | --- |
+| `%LOCALAPPDATA%\dsh-glance\state.json` | 当前线索（v2：`sessionId` / `title` / `startedAt` / `turns`） |
+| `%LOCALAPPDATA%\dsh-glance\settings.json` | 悬浮球大小 `{"ballSize":96}` |
+| `%LOCALAPPDATA%\dsh-glance\ball.png` | 自定义的悬浮球图片 |
+| `%LOCALAPPDATA%\dsh-glance\WebView2\` | WebView2 用户数据目录 |
+| `%TEMP%\glance-host.log` | 宿主侧日志（命令、会话创建、取消、失败原因） |
+| `%TEMP%\glance-widget.log` | 小部件侧日志（DPI、框选、WebView2 初始化、菜单动作） |
+
+状态文件旧格式（v1，扁平 `{sessionId,title}`）会在首次启动时自动升级，升级后旧文件可删。
 
 ## 已知限制
 
-- 面板最多展示本轮线索的历史：最新的回答完整显示，之前的问答收成可点开的摘要气泡；更早的线索请到 DSH 会话列表里打开。
-- 「停止」会调用宿主的 `sessionController.cancel` 中断这一轮对话，但不会撤回已经进入队列的消息；被中断的回答可能缺结尾。
-- 发送失败会自动重试一次；重试会再发一遍同样的内容，模型侧可能收到重复提问。
-- 分析会话若在 DSH 里被删除，会自动新建并在面板顶部提示，但旧上下文不再保留。
-- 状态文件在 `%LOCALAPPDATA%\dsh-glance\state.json`（v2 格式，只记录当前这条线索）；旧的扁平格式会在首次启动时自动升级，迁移后旧文件可以删除。
-- 标题栏按钮每 2 秒向宿主查询一次真实状态（`/api/local/dsh-glance/status`），所以关掉悬浮球后最多有 2 秒延迟；面板关闭、Harness 未启动等情况下按钮只是启动器。
-- 专用会话默认模型必须支持图片输入，否则发送会失败（面板会显示错误）。
-- 首次使用依赖 WebView2 Runtime；缺失时会弹出提示并给出安装地址，安装后重新点一次「一瞥」即可。
-- 自定义外观只做等比缩放，图片不是正方形时四周会留空；原图小于 128×128 会被放大变糊。
-- 自定义外观不区分悬停态，「分析中」的进度环仍然会画在图片外侧。
-- 仅支持 Windows / DSH Desktop。
+**会话与上下文**
+
+- 面板只展示当前这一条线索：最新一轮完整显示，之前的问答收成可点开的气泡；更早的线索请去 DSH 会话列表里找
+- 「停止」中断的是 Harness 这一轮，但不会撤回已经进入队列的消息；被中断的回答可能缺结尾
+- 发送失败会自动重试一次，重试会再发一遍同样的内容，模型侧可能看到重复提问
+- 分析会话在 DSH 里被删除时，会自动新建并在面板顶部提示，旧上下文不再保留
+
+**界面与显示**
+
+- 自定义外观只做等比缩放：图片不是正方形时四周留空；原图小于 128×128 会被放大变糊
+- 自定义外观不区分悬停态；「分析中」的进度环画在图片外侧
+- 标题栏按钮每 2 秒轮询一次，所以从球菜单退出后，按钮最多 2 秒才变回「一瞥」
+
+**环境**
+
+- 仅 Windows + DSH Desktop；WebView2 缺失时会弹窗给出安装地址
+- 只用单屏 2560×1600 @150% 验证过；多屏混合 DPI、竖屏、远程桌面尚未系统测试
+- 宿主与 widget 之间没有协议版本握手：如果两者版本不一致（例如只更新了一半），不会明确报"版本不匹配"
+
+## 排错
+
+**标题栏没有「一瞥」按钮**
+插件没被加载。检查 `dsh.profile.bundles` 里有没有 `@local/dsh-glance`，然后重启 DSH。
+
+**点了按钮，球没出来**
+看 `%TEMP%\glance-host.log` 与 `%TEMP%\glance-widget.log` 的最后几行。最常见是 WebView2 Runtime 缺失（会有弹窗），或 `widget.ps1` 被安全软件拦截。
+
+**球出来了，点球没反应**
+首次初始化 WebView2 需要一两秒，等一下再点。仍然无反应就看 `glance-widget.log` 里的 `webview init` 相关行。
+
+**面板是空白的**
+面板加载的是 `file://` 下的 `panel.html`，路径里不要有会被特殊处理的字符；同时确认 `webview2\` 三个 DLL 还在原位。
+
+**分析一直失败**
+DSH 当前默认模型不支持图片输入。换一个多模态模型再试，面板会显示具体错误。
+
+**发送后卡在「分析中」**
+看 `glance-host.log` 里有没有 `prompt` 失败或 `cancel`；也可以在面板点「停止」后再发一次。
 
 ## 隐私
 
-- 截图只会发送到 DSH 中配置的模型服务商；插件不向其他服务上传。
-- 自定义外观图片会复制到 `%LOCALAPPDATA%\dsh-glance\ball.png`，仅在本机保存。
-- DSH 专用会话会保存截图与对话历史；插件本体不额外落盘截图（`-SelfTest` 自测模式除外）。
-- 屏幕捕获只在你主动框选时发生，不会后台持续截屏。
+- 截图只发送到你在 DSH 里配置的模型服务商，插件不向其他服务上传任何东西
+- 自定义外观图片复制到 `%LOCALAPPDATA%\dsh-glance\ball.png`，仅本机保存
+- 屏幕捕获只在你主动框选时发生，不后台持续截屏
+- 插件本体不额外落盘截图（`-SelfTest` 自测模式除外，它会写一张到 `%TEMP%`）
+- 日志里不记录截图内容，只记录流程与错误
+
+## 卸载
+
+```powershell
+dsh plugin --profile desktop remove @local/dsh-glance
+```
+
+再从 `dsh.profile.bundles` 里删掉 `"@local/dsh-glance"`，重启 DSH。本地数据可留可删：`%LOCALAPPDATA%\dsh-glance\`。
+
+## 开发
+
+```
+index.js              Host 半：命令、会话、子进程、图片 prompt、流式回传
+client.js             Web 半：标题栏启动按钮 + 状态轮询
+widget.ps1            原生小部件：悬浮球、冻结框选、WebView2 面板宿主
+panel.html            面板页面（单文件 HTML/CSS/JS）
+cordis.patch.yml      DSH bundle 声明
+webview2/             vendored WebView2 SDK（Core / WinForms / Loader）
+locale/ icon.svg      文案与图标
+test/                 回归测试
+```
+
+**测试**
+
+```powershell
+npm test                                    # 宿主协议与停止链路（9 项断言）
+powershell -STA -File .\widget.ps1 -SelfTest # 小部件自测：起面板、截图、退出，exit 0 为通过
+```
+
+`-SelfTest` 需要能写 `%LOCALAPPDATA%`，跑完会在 `%TEMP%` 留一张 `glance-selftest.png`。
+
+**注意**
+
+- `widget.ps1` 必须保持 UTF-8 **带 BOM**：PowerShell 5.1 读无 BOM 文件会按 ANSI 解码，中文全变乱码且解析失败。`.gitattributes` 已固定 `*.ps1` 按 CRLF 检出
+- 宿主与 widget 之间的消息是裸 JSON 行，改协议要同时改 `index.js`、`widget.ps1`、`panel.html` 三处
+- 改完 `widget.ps1` 记得重启 DSH：宿主会把脚本作为子进程常驻，不会热更新
 
 ## 版本
 
 完整历史见 [CHANGELOG.md](CHANGELOG.md)。
 
-- `0.5.1` — 悬浮球可选 4 档大小（小/标准/大/特大），设置存 `%LOCALAPPDATA%\dsh-glance\settings.json`；自定义外观不再套一层黑色投影。
-- `0.5.0` — 一次框选一条线索：新截图开新会话、追问复用、面板多轮气泡、停止保留文本。
-- `0.4.5` — 「运行中」改为轮询宿主真实状态，从悬浮球菜单退出后按钮会自己变回「一瞥」；修掉右键菜单首次打开偏小、文字贴边（DPI 缩放此前只在首次截图后才生效），并把菜单内边距整体放松。
-- `0.4.4` — 标题栏「一瞥」开关改成启动按钮（成功启动后显示「运行中」），不再用本地存储记状态，从悬浮球退出后不会再出现开关与实际不符；右键菜单按面板视觉重做：圆角浮层、圆角悬停、细描边、内缩分隔线。
-- `0.4.3` — 悬浮球加右键菜单：更换悬浮球图片、恢复默认外观、关闭一瞥。换外观不再需要先截一次图把面板叫出来。
-- `0.4.2` — 修复「停止」只停住面板、Harness 里那一轮仍在继续生成的问题：现在会调用宿主的 `sessionController.cancel` 真正中断该轮对话。
-- `0.4.1` — 悬浮球重做：柔光立体外观 + 白色放大镜图标，尺寸按系统 DPI 缩放（此前固定 84 物理像素，高缩放下偏小）；支持上传自己的图片作为悬浮球外观，可一键恢复默认；面板改为贴在悬浮球左侧（放不下时依次退到球下、球上），不再被悬浮球挡住右上角的关闭按钮。
-- `0.4.0` — 追问与首次发送分离（不再重传截图）；新增「停止」；会话失效与重建时在面板提示；状态文件移到 `%LOCALAPPDATA%\dsh-glance\`；删除约 250 行死代码；WebView2 缺失时弹窗提示安装；面板宽高统一按 DPI 换算（宽度限制在 440–560 DIP，不再随截图变宽），窄面板下输入框与按钮分行排列，预览图按面板宽度铺满。
-- `0.3.0` — 改名「一瞥 / Glance」；WebView2 面板、流式分析、断网错误、通用化截图分析。
+| 版本 | 主题 |
+| --- | --- |
+| `0.5.1` | 悬浮球 4 档大小；自定义外观去掉黑色投影 |
+| `0.5.0` | 一次框选一条线索：会话生命周期、面板多轮气泡、停止保留文本 |
+| `0.4.5` | 状态改轮询宿主；修菜单首次打开偏小、文字贴边 |
+| `0.4.4` | 标题栏开关改成启动按钮；右键菜单按面板视觉重做 |
+| `0.4.3` | 悬浮球右键菜单（换外观 / 恢复默认 / 退出） |
+| `0.4.2` | 「停止」真正中断 Harness 这一轮 |
+| `0.4.1` | 悬浮球重做 + 按 DPI 缩放 + 自定义图片；面板避开球 |
+| `0.4.0` | 追问不再重传截图；停止；DPI 面板尺寸；删死代码 |
+| `0.3.0` | 改名「一瞥 / Glance」；WebView2 面板、流式分析 |
+| `0.2.x` | 最初的冻结框选与截图分析原型 |
 
 ## 第三方
 
-WebView2 SDK 版权与许可见 `webview2/LICENSE.txt`。本仓库自身代码以 MIT 许可证发布，见 [LICENSE](LICENSE)。
+WebView2 SDK 的版权与许可见 `webview2/LICENSE.txt`。本仓库自身代码以 MIT 许可证发布，见 [LICENSE](LICENSE)。
