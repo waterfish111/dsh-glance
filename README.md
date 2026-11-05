@@ -198,7 +198,8 @@ test/                 回归测试
 **测试**
 
 ```powershell
-npm test                                    # 宿主协议与停止链路（9 项断言）
+npm run check                               # 一键：JS 语法 + 宿主协议/停止链路 + 面板脚本编译
+npm test                                    # 只跑测试（9 项断言 + 面板内联脚本）
 powershell -STA -File .\widget.ps1 -SelfTest # 小部件自测：起面板、截图、退出，exit 0 为通过
 ```
 

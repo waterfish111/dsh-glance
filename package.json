@@ -25,7 +25,8 @@
     "./icon": "./icon.svg"
   },
   "scripts": {
-    "test": "node test/stop-cancel.test.mjs"
+    "test": "node test/stop-cancel.test.mjs && node test/panel-compile.mjs",
+    "check": "node --check index.js && node --check client.js && npm test"
   },
   "files": [
     "index.js",

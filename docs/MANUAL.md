@@ -432,7 +432,7 @@ GET /api/local/dsh-glance/status
 | `widget.ps1` | ~2136 | 悬浮球、框选、面板窗口、右键菜单、外观 |
 | `panel.html` | ~1030 | 面板 UI（内联 CSS/JS，无构建步骤） |
 | `test/stop-cancel.test.mjs` | ~181 | 宿主协议 + 停止链路，9 项断言 |
-| `test/panel-script.mjs` | ~30 | 面板内联脚本能否编译 |
+| `test/panel-compile.mjs` | ~30 | 面板内联脚本能否编译 |
 
 ### 11.2 三个必踩的坑
 
@@ -451,9 +451,7 @@ GET /api/local/dsh-glance/status
 ### 11.3 本地验证
 
 ```powershell
-node --check index.js
-node --check client.js
-npm test                                  # 两个测试文件
+npm run check                             # 一键：JS 语法 + 两个测试文件
 powershell -File widget.ps1 -SelfTest     # 起一次面板并截图，验证没炸
 ```
 
