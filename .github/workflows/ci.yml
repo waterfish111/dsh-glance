@@ -24,7 +24,7 @@ jobs:
       - name: 单元测试（宿主协议 / 停止链路 / 面板脚本）
         run: npm test
 
-      -      - name: widget.ps1 解析
+      - name: widget.ps1 解析
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
