@@ -4,9 +4,9 @@
 
 一个 **DSH Desktop 本地插件**。点会话标题栏的「一瞥」，屏幕角落出现一个置顶悬浮球；点球框选任意应用的区域，截图直接发给多模态模型，分析结果在悬浮面板里流式显示，还能就着这张图继续追问。
 
-![status](https://img.shields.io/badge/status-beta-orange) ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue) ![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/status-beta-orange) ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue) ![license](https://img.shields.io/badge/license-MIT-green) [![CI](https://github.com/waterfish111/dsh-glance/actions/workflows/ci.yml/badge.svg)](https://github.com/waterfish111/dsh-glance/actions/workflows/ci.yml)
 
-更新日志：[CHANGELOG.md](CHANGELOG.md) ｜ 完整说明：[docs/MANUAL.md](docs/MANUAL.md) ｜ 许可证：[MIT](LICENSE) ｜ 当前版本：`0.5.1`（beta）
+更新日志：[CHANGELOG.md](CHANGELOG.md) ｜ 完整说明：[docs/MANUAL.md](docs/MANUAL.md) ｜ 许可证：[MIT](LICENSE) ｜ 当前版本：`0.5.2`（beta）
 
 ![一瞥面板：两轮问答，第一轮收成可点开的气泡](docs/panel.png)
 
@@ -217,6 +217,7 @@ powershell -STA -File .\widget.ps1 -SelfTest # 小部件自测：起面板、截
 
 | 版本 | 主题 |
 | --- | --- |
+| `0.5.2` | 修「会话已失效」提示不显示；补完整说明书；加本地自检与 CI |
 | `0.5.1` | 悬浮球 4 档大小；自定义外观去掉黑色投影 |
 | `0.5.0` | 一次框选一条线索：会话生命周期、面板多轮气泡、停止保留文本 |
 | `0.4.5` | 状态改轮询宿主；修菜单首次打开偏小、文字贴边 |
