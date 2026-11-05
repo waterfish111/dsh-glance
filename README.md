@@ -6,7 +6,7 @@
 
 ![status](https://img.shields.io/badge/status-beta-orange) ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue) ![license](https://img.shields.io/badge/license-MIT-green)
 
-更新日志：[CHANGELOG.md](CHANGELOG.md) ｜ 许可证：[MIT](LICENSE) ｜ 当前版本：`0.5.1`（beta）
+更新日志：[CHANGELOG.md](CHANGELOG.md) ｜ 完整说明：[docs/MANUAL.md](docs/MANUAL.md) ｜ 许可证：[MIT](LICENSE) ｜ 当前版本：`0.5.1`（beta）
 
 ![一瞥面板：两轮问答，第一轮收成可点开的气泡](docs/panel.png)
 
@@ -30,7 +30,7 @@
 | 宿主 | DSH Desktop（本地 profile 插件机制） |
 | 运行时 | Microsoft Edge WebView2 Runtime（Win11 通常自带，Win10 可能需手动装） |
 | 脚本 | Windows PowerShell 5.1（系统自带，`widget.ps1` 依赖它） |
-| 模型 | DSH 里配置的默认模型必须支持图片输入 |
+| 模型 | 默认的 DeepSeek-V4.1-Flash 原生支持图片，**不需要额外装插件**；换成纯文本模型才会失败 |
 
 ### 2. 安装
 
@@ -161,7 +161,7 @@ DSH 主进程 (index.js)                 widget.ps1 (PowerShell + WinForms)
 面板加载的是 `file://` 下的 `panel.html`，路径里不要有会被特殊处理的字符；同时确认 `webview2\` 三个 DLL 还在原位。
 
 **分析一直失败**
-DSH 当前默认模型不支持图片输入。换一个多模态模型再试，面板会显示具体错误。
+多半是当前会话选的模型不接受图片输入。默认的 DeepSeek-V4.1-Flash 在 DSH 内置模型目录里声明了 `inputModalities: ["text", "image"]`，开箱即用、不需要装任何插件；但如果在模型选择里换成了纯文本型号，图片会被直接拒收——换回带视觉的模型再试。面板会显示具体错误，可以据此区分「模型不收图片」和「网络/鉴权失败」。
 
 **发送后卡在「分析中」**
 看 `glance-host.log` 里有没有 `prompt` 失败或 `cancel`；也可以在面板点「停止」后再发一次。
