@@ -162,8 +162,8 @@
   .analysis-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    justify-content: flex-start;
+    gap: 8px;
     min-height: 24px;
     margin-bottom: 10px;
   }
@@ -175,10 +175,77 @@
     letter-spacing: 0.01em;
   }
 
+  .thread-tag {
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.07);
+    white-space: nowrap;
+  }
+
+  .turn {
+    padding: 0 0 12px;
+    margin: 0 0 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  }
+  .turn-q {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 5px;
+    word-break: break-word;
+  }
+  .turn-q::before {
+    content: "你问 · ";
+    color: var(--dim);
+  }
+  .turn-a {
+    font-size: 12.5px;
+    color: var(--muted);
+    line-height: 1.65;
+    max-height: 5.1em;
+    overflow: hidden;
+    position: relative;
+    cursor: pointer;
+    -webkit-mask-image: linear-gradient(to bottom, #000 58%, rgba(0, 0, 0, 0.1));
+    mask-image: linear-gradient(to bottom, #000 58%, rgba(0, 0, 0, 0.1));
+  }
+  .turn-a.open {
+    max-height: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .turn-a .md-p,
+  .turn-a p { margin: 0 0 0.5em; }
+  .turn-a .md-p:last-child,
+  .turn-a p:last-child { margin-bottom: 0; }
+  .turn-fresh {
+    margin-bottom: 10px;
+  }
+
+  .stop-mark {
+    margin: 7px 0 0;
+    font-size: 11.5px;
+    color: #d8ab4b;
+    letter-spacing: 0.01em;
+  }
+  .stop-mark::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: #d8ab4b;
+    margin-right: 7px;
+    vertical-align: 1px;
+  }
+
   .status {
     display: inline-flex;
     align-items: center;
     gap: 7px;
+    margin-left: auto;
     font-size: 11px;
     letter-spacing: 0.02em;
     color: var(--dim);
@@ -423,6 +490,7 @@
       <section class="analysis">
         <div class="analysis-head">
           <span class="section-title">分析结果</span>
+          <span class="thread-tag" id="thread-tag" hidden></span>
           <span class="status" id="status"><span class="status-dot"></span><span id="status-text">待发送</span></span>
         </div>
         <div class="analysis-body" id="analysis-body">
@@ -475,6 +543,7 @@
     shot: document.getElementById('shot'),
     status: document.getElementById('status'),
     statusText: document.getElementById('status-text'),
+    threadTag: document.getElementById('thread-tag'),
     body: document.getElementById('analysis-body'),
     note: document.getElementById('note'),
     send: document.getElementById('send'),
@@ -487,6 +556,7 @@
 
   var PALETTE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.8 2-1.9 0-.5-.2-.9-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1 .9-1.9 1.9-1.9h1.1A5 5 0 0 0 21 9.6C21 5.8 17 3 12 3z"/><circle cx="7.7" cy="11.6" r="1.05"/><circle cx="11" cy="7.7" r="1.05"/><circle cx="15.3" cy="9.3" r="1.05"/></svg>';
   var RESET_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.6-5.9"/><path d="M4 4v4.4h4.4"/></svg>';
+  var TURN_HINT_AT = 6;
 
   function updateSkinButton() {
     if (!els.skin) return;
@@ -505,6 +575,9 @@
     hasImage: false,
     sent: false,
     custom: false,
+    turns: [],
+    thread: null,
+    stopped: false,
     lastHeight: 0,
     maxHeight: 9999,
     stick: true
@@ -646,16 +719,40 @@
     els.content.scrollTop = els.content.scrollHeight;
   }
 
+  /**
+   * Older turns collapse into bubbles above the live answer. The newest answer
+   * keeps the full-width markdown treatment so single-turn use looks unchanged.
+   */
+  function renderFinishedTurns() {
+    var finished = state.turns.length > 1 ? state.turns.slice(0, -1) : [];
+    var out = '';
+    for (var i = 0; i < finished.length; i += 1) {
+      var turn = finished[i];
+      out += '<div class="turn">' +
+        '<div class="turn-q">' + escapeHtml(turn.q) + '</div>' +
+        '<div class="turn-a">' +
+        (turn.a ? renderMarkdown(turn.a) : '<span>（这次没有留下回答）</span>') +
+        '</div>' +
+        (turn.stopped ? '<p class="stop-mark">这次回答被停止了，可能不完整。</p>' : '') +
+        '</div>';
+    }
+    return out;
+  }
+
   function render() {
     var html = state.notice ? '<p class="notice">' + escapeHtml(state.notice) + '</p>' : '';
+    html += renderFinishedTurns();
     if (state.error) {
       html += '<p class="error-text">' + escapeHtml(state.error) + '</p>';
     } else if (state.text) {
-      html += renderMarkdown(state.text);
-    } else {
-      html += '<div class="empty">' +
-        (state.busy ? '正在读取画面并分析…' : '截图就绪，说明你想让我看什么。') +
-        '</div>';
+      html += '<div class="turn-fresh">' + renderMarkdown(state.text) + '</div>';
+    } else if (state.busy) {
+      html += '<div class="empty">正在读取画面并分析…</div>';
+    } else if (state.turns.length === 0) {
+      html += '<div class="empty">截图就绪，说明你想让我看什么。</div>';
+    }
+    if (state.stopped) {
+      html += '<p class="stop-mark">已停止，这段回答不完整。</p>';
     }
     els.body.innerHTML = html;
     scrollToBottomIfSticking();
@@ -689,6 +786,10 @@
     state.busy = false;
     state.hasImage = true;
     state.sent = false;
+    state.turns = [];
+    state.thread = null;
+    state.stopped = false;
+    updateThreadTag();
     setStatus('待发送', '');
     els.stop.classList.remove('on');
     els.note.disabled = false;
@@ -760,9 +861,21 @@
   function onStopped() {
     setBusy(false);
     setStatus('已停止', '');
+    // Keep whatever the model managed to write; the marker says it is partial.
+    state.stopped = true;
     els.note.focus();
     render();
     scheduleMeasure();
+  }
+
+  function onThread(msg) {
+    state.thread = msg && msg.sessionId ? {
+      sessionId: String(msg.sessionId),
+      title: msg.title ? String(msg.title) : '',
+      turns: Number(msg.turns) || 0,
+      startedAt: Number(msg.startedAt) || 0
+    } : null;
+    updateThreadTag();
   }
 
   function onSessionReset() {
@@ -787,6 +900,7 @@
         case 'analysis-done': onDone(); break;
         case 'analysis-error': onError(msg); break;
         case 'analysis-stopped': onStopped(); break;
+        case 'thread': onThread(msg); break;
         case 'session-reset': onSessionReset(); break;
         default: break;
       }
@@ -814,11 +928,40 @@
     setStatus('正在停止…', 'busy');
   });
 
-  function beginTurn(message) {
+  function updateThreadTag() {
+    if (!els.threadTag) return;
+    var count = state.turns.length;
+    if (count <= 1) {
+      els.threadTag.hidden = true;
+      els.threadTag.textContent = '';
+      return;
+    }
+    els.threadTag.hidden = false;
+    els.threadTag.textContent = '第 ' + count + ' 轮';
+  }
+
+  /** Freezes the answer on screen into the turn list, then opens a new turn. */
+  function recordTurn(question) {
+    var last = state.turns.length > 0 ? state.turns[state.turns.length - 1] : null;
+    if (last) {
+      if (!last.a) last.a = state.text;
+      if (state.stopped) last.stopped = true;
+    }
+    state.stopped = false;
+    state.turns.push({ q: question, a: '' });
     state.text = '';
+    updateThreadTag();
+    // A soft nudge, never a hard stop: the thread still works past this point.
+    if (state.turns.length === TURN_HINT_AT) {
+      state.notice = '这条线索已经聊了 ' + TURN_HINT_AT + ' 轮，上下文变长会让回答变慢；换话题时点「重新框选」会更清爽。';
+    }
+  }
+
+  function beginTurn(message, question) {
     state.error = '';
     state.notice = '';
     state.stick = true;
+    recordTurn(question || '');
     els.note.value = '';
     setBusy(true);
     render();
@@ -831,10 +974,10 @@
     var note = els.note.value.trim();
     if (state.sent) {
       if (!note) return;
-      beginTurn({ type: 'followup', text: note });
+      beginTurn({ type: 'followup', text: note }, note);
       return;
     }
-    beginTurn({ type: 'send', note: note });
+    beginTurn({ type: 'send', note: note }, note || '这张图里有什么？');
     state.sent = true;
   });
 
@@ -855,6 +998,13 @@
       event.preventDefault();
       post({ type: 'minimize' });
     }
+  });
+
+  els.body.addEventListener('click', function (event) {
+    var node = event.target && event.target.closest ? event.target.closest('.turn-a') : null;
+    if (!node) return;
+    node.classList.toggle('open');
+    scheduleMeasure();
   });
 
   els.shot.addEventListener('load', scheduleMeasure);

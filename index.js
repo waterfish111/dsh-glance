@@ -37,18 +37,40 @@ export function apply(ctx) {
 
   let analysisSessionId;
   let analysisTitle = '';
+  let analysisStartedAt = 0;
+  let analysisTurns = 0;
   let analysisCwd;
   let stateLoaded = false;
   let widget;
   let deliveryQueue = Promise.resolve();
   let activeRun;
 
+  const STATE_VERSION = 2;
+
+  /** Accepts both the v2 shape and the legacy flat `{ sessionId, title }`. */
+  function normalizeState(parsed) {
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    const current = parsed.version === STATE_VERSION ? parsed.current : parsed;
+    if (!current || typeof current.sessionId !== 'string' || current.sessionId.length === 0) {
+      return undefined;
+    }
+    const startedAt = Number(current.startedAt);
+    const turns = Number(current.turns);
+    const isV2 = parsed.version === STATE_VERSION;
+    return {
+      sessionId: current.sessionId,
+      title: typeof current.title === 'string' ? current.title : '',
+      // A legacy record has no clock, so it starts counting from now.
+      startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : Date.now(),
+      turns: Number.isFinite(turns) && turns > 0 ? Math.floor(turns) : 0,
+      migrated: !isV2
+    };
+  }
+
   async function readStateFile(path) {
     try {
       const parsed = JSON.parse(await readFile(path, 'utf8'));
-      if (parsed && typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
-        return parsed;
-      }
+      return normalizeState(parsed);
     } catch {
       /* Missing, unreadable or malformed: treat as no state. */
     }
@@ -66,26 +88,49 @@ export function apply(ctx) {
     }
     if (!parsed) return;
     analysisSessionId = parsed.sessionId;
-    analysisTitle = typeof parsed.title === 'string' ? parsed.title : '';
-    if (migrated) await persistState();
+    analysisTitle = parsed.title;
+    analysisStartedAt = parsed.startedAt;
+    analysisTurns = parsed.turns;
+    if (migrated || parsed.migrated) await persistState();
   }
 
   async function persistState() {
     try {
       await mkdir(stateDir, { recursive: true });
-      await writeFile(
-        statePath,
-        JSON.stringify({ sessionId: analysisSessionId, title: analysisTitle }),
-        'utf8'
-      );
+      const current = {
+        sessionId: analysisSessionId,
+        title: analysisTitle,
+        startedAt: analysisStartedAt,
+        turns: analysisTurns
+      };
+      await writeFile(statePath, JSON.stringify({ version: STATE_VERSION, current }), 'utf8');
     } catch {
       /* Persistence is best effort; the in-memory session still works. */
     }
   }
 
-  async function ensureAnalysisSession() {
+  function threadTitle(startedAt) {
+    const date = new Date(startedAt > 0 ? startedAt : Date.now());
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${ANALYSIS_TITLE} · ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  /** Tells the panel which thread the coming turns belong to. */
+  function sendThreadInfo() {
+    if (!analysisSessionId) return;
+    sendToWidget({
+      type: 'thread',
+      sessionId: analysisSessionId,
+      title: analysisTitle,
+      turns: analysisTurns,
+      startedAt: analysisStartedAt
+    });
+  }
+
+  async function ensureAnalysisSession(options) {
     await loadState();
-    if (analysisSessionId) {
+    const fresh = Boolean(options && options.fresh === true);
+    if (!fresh && analysisSessionId) {
       try {
         await ctx.sessionController.inspect(analysisSessionId, AbortSignal.timeout(5000));
         return { sessionId: analysisSessionId, created: false };
@@ -97,6 +142,8 @@ export function apply(ctx) {
     const created = await ctx.sessionController.create({ cwd });
     analysisSessionId = created.sessionId;
     analysisTitle = '';
+    analysisStartedAt = Date.now();
+    analysisTurns = 0;
     await persistState();
     logger.info(`created analysis session ${analysisSessionId} in ${cwd}`);
     return { sessionId: analysisSessionId, created: true };
@@ -238,8 +285,14 @@ export function apply(ctx) {
     }
   }
 
-  async function runTurn(content, label) {
-    const run = { controller: new AbortController(), stoppedByUser: false, sessionId: undefined };
+  async function runTurn(content, label, options) {
+    const fresh = Boolean(options && options.fresh === true);
+    const run = {
+      controller: new AbortController(),
+      stoppedByUser: false,
+      sessionId: undefined,
+      fresh
+    };
     activeRun = run;
     try {
       let lastError;
@@ -248,10 +301,12 @@ export function apply(ctx) {
         if (run.stoppedByUser) break;
         const hadSession = Boolean(analysisSessionId);
         try {
-          const ensured = await ensureAnalysisSession();
+          const ensured = await ensureAnalysisSession({ fresh });
           sessionId = ensured.sessionId;
           run.sessionId = sessionId;
-          if (ensured.created && hadSession) {
+          // A deliberate fresh session is not a lost context; only report the
+          // unexpected case where the stored session had vanished.
+          if (!fresh && ensured.created && hadSession) {
             logger.info('analysis session was recreated; context reset');
             sendToWidget({ type: 'session-reset' });
           }
@@ -288,17 +343,22 @@ export function apply(ctx) {
         return;
       }
 
-      if (analysisTitle !== ANALYSIS_TITLE) {
+      analysisTurns += 1;
+      await persistState();
+
+      const desiredTitle = threadTitle(analysisStartedAt);
+      if (analysisTitle !== desiredTitle) {
         try {
-          await ctx.sessionController.rename({ sessionId, title: ANALYSIS_TITLE });
-          analysisTitle = ANALYSIS_TITLE;
+          await ctx.sessionController.rename({ sessionId, title: desiredTitle });
+          analysisTitle = desiredTitle;
           await persistState();
         } catch {
           /* The automatic session title is acceptable. */
         }
       }
 
-      logger.info(`delivered ${label} to ${sessionId}`);
+      logger.info(`delivered ${label} to ${sessionId} (turn ${analysisTurns})`);
+      sendThreadInfo();
       await streamReply(sessionId, run);
     } finally {
       if (activeRun === run) activeRun = undefined;
@@ -328,7 +388,7 @@ export function apply(ctx) {
       { type: 'image', mediaType: 'image/png', data: imageBase64, name: 'screenshot.png' },
       { type: 'text', text: prompt }
     ];
-    await runTurn(content, 'capture');
+    await runTurn(content, 'capture', { fresh: true });
   }
 
   /** Follow-up questions reuse the analysis session, so the screenshot is not re-sent. */
@@ -339,7 +399,7 @@ export function apply(ctx) {
       sendToWidget({ type: 'analysis-error', message: '会话已失效，请重新框选一次。' });
       return;
     }
-    await runTurn([{ type: 'text', text: value }], 'followup');
+    await runTurn([{ type: 'text', text: value }], 'followup', { fresh: false });
   }
 
   async function cancelTurn(sessionId) {
@@ -598,7 +658,16 @@ export function apply(ctx) {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store'
           });
-          response.end(JSON.stringify({ ok: true, running }));
+          response.end(
+            JSON.stringify({
+              ok: true,
+              running,
+              sessionId: analysisSessionId || null,
+              title: analysisTitle || null,
+              turns: analysisTurns,
+              startedAt: analysisStartedAt || null
+            })
+          );
         }
       })
     );

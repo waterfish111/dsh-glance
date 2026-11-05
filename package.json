@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-glance",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "一瞥 / Glance：置顶悬浮球 + 框选任意屏幕区域 + 多模态流式分析。",

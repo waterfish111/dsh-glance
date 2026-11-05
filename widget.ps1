@@ -1274,6 +1274,15 @@ function Handle-HostLine([string]$json) {
     'analysis-done' { Send-PanelMessage @{ type = 'analysis-done' } }
     'analysis-stopped' { Send-PanelMessage @{ type = 'analysis-stopped' } }
     'analysis-error' { Send-PanelMessage @{ type = 'analysis-error'; message = [string]$message.message } }
+    'thread' {
+      Send-PanelMessage @{
+        type = 'thread'
+        sessionId = [string]$message.sessionId
+        title = [string]$message.title
+        turns = [int]$message.turns
+        startedAt = $message.startedAt
+      }
+    }
   }
 }
 
