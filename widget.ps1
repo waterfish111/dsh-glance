@@ -247,6 +247,7 @@ $script:ballForm = $null
 $script:ballX = 0
 $script:ballY = 0
 $script:ballSize = 84
+$script:ballSizeDip = 84
 $script:ballMargin = 13
 $script:ballWindow = 110
 $script:ballWindowHeight = 110
@@ -258,6 +259,8 @@ $script:pendingBallAction = $null
 $script:ballActionTimer = $null
 $script:ballMenuActions = $null
 $script:ballMenuResetItem = $null
+$script:ballMenuSizeItems = $null
+$script:ballSettingsPath = ''
 $script:ballMenuScale = 0.0
 $script:ballImage = $null
 $script:ballImageStream = $null
@@ -474,22 +477,8 @@ function Get-CustomBallBitmap {
     $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
     $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 
-    $radius = [single]($size / 2)
-    $centerX = [single]($margin + $radius)
-    $centerY = [single]($margin + $radius)
-    $maxR = [single](($script:ballWindow / 2) - 1)
-    for ($i = 18; $i -ge 1; $i--) {
-      $inner = [single]($radius * 1.02)
-      $rr = $inner + (($maxR - $inner) * ($i / 18.0))
-      if ($rr -gt $maxR) { $rr = $maxR }
-      $shadow = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(4, 0, 0, 0))
-      try {
-        $graphics.FillEllipse($shadow, ($centerX - $rr), ($centerY - $rr + ($radius * 0.10)), ($rr * 2), ($rr * 2))
-      } finally {
-        $shadow.Dispose()
-      }
-    }
-
+    # A custom image is painted as-is: any shadow we add sits outside its
+    # silhouette and reads as a black ring, which users read as a bug.
     $scale = [Math]::Min(($size / [double]$image.Width), ($size / [double]$image.Height))
     $width = [Math]::Max(1, [int][Math]::Round($image.Width * $scale))
     $height = [Math]::Max(1, [int][Math]::Round($image.Height * $scale))
@@ -515,6 +504,81 @@ function Get-BallImagePath {
   }
   $script:ballImagePath = Join-Path $dir 'ball.png'
   return $script:ballImagePath
+}
+
+function Get-GlanceSettingsPath {
+  if (-not [string]::IsNullOrEmpty($script:ballSettingsPath)) { return $script:ballSettingsPath }
+  $dir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'dsh-glance'
+  try {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  } catch {
+    $dir = Join-Path (Join-Path ([System.IO.Path]::GetTempPath()) 'dsh-glance')
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  $script:ballSettingsPath = Join-Path $dir 'settings.json'
+  return $script:ballSettingsPath
+}
+
+function Get-BallSizePresets { return @(72, 84, 96, 108) }
+
+function Get-BallSizeName([int]$dip) {
+  switch ($dip) {
+    72 { return '小' }
+    84 { return '标准' }
+    96 { return '大' }
+    108 { return '特大' }
+  }
+  return '自定义'
+}
+
+function Read-BallSizeSetting {
+  try {
+    $path = Get-GlanceSettingsPath
+    if (-not (Test-Path -LiteralPath $path)) { return 84 }
+    $data = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    if ($null -eq $data -or $null -eq $data.ballSize) { return 84 }
+    $value = [int]$data.ballSize
+    if ($value -lt 64 -or $value -gt 128) { return 84 }
+    return $value
+  } catch {
+    Write-Log ('ball size read failed: ' + $_.Exception.Message)
+    return 84
+  }
+}
+
+function Write-BallSizeSetting([int]$value) {
+  try {
+    $path = Get-GlanceSettingsPath
+    $json = @{ ballSize = $value } | ConvertTo-Json -Compress
+    [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+  } catch {
+    Write-Log ('ball size save failed: ' + $_.Exception.Message)
+  }
+}
+
+# Rebuilds the layered window from a DIP size; everything else is derived from it.
+function Apply-BallSize([int]$dipSize) {
+  if ($dipSize -lt 64) { $dipSize = 64 }
+  if ($dipSize -gt 128) { $dipSize = 128 }
+  $scale = $script:dpiScale
+  if ($scale -lt 1.0) { $scale = 1.0 }
+  $script:ballSizeDip = $dipSize
+  $script:ballSize = [int][Math]::Round($dipSize * $scale)
+  $script:ballMargin = [int][Math]::Round($script:ballSize * 0.15)
+  $script:ballWindow = $script:ballSize + 2 * $script:ballMargin
+  $script:ballWindowHeight = $script:ballWindow
+  if ($null -ne $script:ballImageScaled) {
+    try { $script:ballImageScaled.Dispose() } catch { }
+    $script:ballImageScaled = $null
+  }
+  Write-BallSizeSetting $dipSize
+  Write-Log ('ball size ' + $dipSize + 'dip -> ' + $script:ballSize + 'px')
+  if ($null -ne $script:ballForm) {
+    try { Update-Ball } catch { Write-Log ('ball resize failed: ' + $_.Exception.Message) }
+    try {
+      if ($null -ne $script:panelForm -and $script:panelForm.Visible) { Move-PanelToBall }
+    } catch { }
+  }
 }
 
 function Set-BallImageFree {
@@ -676,18 +740,39 @@ function Get-BallMenu {
   $menu.BackColor = [System.Drawing.Color]::FromArgb(27, 33, 48)
   $menu.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
   $menu.Font = [System.Drawing.Font]::new('Microsoft YaHei UI', [float](8.5 * $scale))
-  $menu.Renderer = [ScreenSnapMenuRenderer]::new([ScreenSnapMenuColors]::new(), [float]$scale)
+  $renderer = [ScreenSnapMenuRenderer]::new([ScreenSnapMenuColors]::new(), [float]$scale)
+  $menu.Renderer = $renderer
   $edge = [int](4 * $scale)
   $menu.Padding = [System.Windows.Forms.Padding]::new($edge, $edge, $edge, $edge)
 
   $menu.Items.Add((New-BallMenuEntry '更换外观…' $true { Select-BallImage })) | Out-Null
   $script:ballMenuResetItem = New-BallMenuEntry '恢复默认外观' $false { Reset-BallImage }
   $menu.Items.Add($script:ballMenuResetItem) | Out-Null
+
+  $sizeMenu = [System.Windows.Forms.ToolStripMenuItem]::new('悬浮球大小')
+  $sizeMenu.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
+  $sizeMenu.Padding = [System.Windows.Forms.Padding]::new([int](20 * $scale), [int](1 * $scale), 0, [int](1 * $scale))
+  $sizeDropDown = $sizeMenu.DropDown
+  $sizeDropDown.BackColor = [System.Drawing.Color]::FromArgb(27, 33, 48)
+  $sizeDropDown.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
+  $sizeDropDown.Font = $menu.Font
+  $sizeDropDown.Renderer = $renderer
+  $sizeDropDown.ShowImageMargin = $false
+  $sizeDropDown.Padding = [System.Windows.Forms.Padding]::new($edge, $edge, $edge, $edge)
+  $script:ballMenuSizeItems = @{}
+  foreach ($preset in (Get-BallSizePresets)) {
+    $label = (Get-BallSizeName $preset) + ' · ' + $preset
+    $entry = New-BallMenuEntry $label $true ([scriptblock]::Create('Apply-BallSize ' + $preset))
+    $script:ballMenuSizeItems[$preset] = $entry
+    $sizeDropDown.Items.Add($entry) | Out-Null
+  }
+  $menu.Items.Add($sizeMenu) | Out-Null
+
   $menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new()) | Out-Null
   $menu.Items.Add((New-BallMenuEntry '退出' $true { Close-Widget })) | Out-Null
 
   $menu.Add_Closed({ OnBallMenuClosed })
-  $menu.Add_Opened({
+  $roundRegion = {
     param($sender, $e)
     try {
       if ($null -eq $sender -or $sender.Width -le 0 -or $sender.Height -le 0) { return }
@@ -702,10 +787,29 @@ function Get-BallMenu {
     } catch {
       Write-Log ('ball menu region failed: ' + $_.Exception.Message)
     }
-  })
+  }
+  $menu.Add_Opened($roundRegion)
+  $sizeDropDown.Add_Opened($roundRegion)
   $script:ballMenu = $menu
   $script:ballMenuScale = $scale
+  Update-BallSizeChecks
   return $menu
+}
+
+function Update-BallSizeChecks {
+  if ($null -eq $script:ballMenuSizeItems) { return }
+  foreach ($key in @($script:ballMenuSizeItems.Keys)) {
+    $item = $script:ballMenuSizeItems[$key]
+    if ($null -eq $item) { continue }
+    $active = ([int]$key -eq [int]$script:ballSizeDip)
+    if ($active) {
+      $item.Text = '● ' + (Get-BallSizeName ([int]$key)) + ' · ' + [int]$key
+      $item.ForeColor = [System.Drawing.Color]::FromArgb(104, 162, 255)
+    } else {
+      $item.Text = '　' + (Get-BallSizeName ([int]$key)) + ' · ' + [int]$key
+      $item.ForeColor = [System.Drawing.Color]::FromArgb(232, 238, 252)
+    }
+  }
 }
 
 function OnBallMenuClosed {
@@ -733,6 +837,7 @@ function Show-BallMenu {
     if ($null -ne $script:ballMenuResetItem) {
       $script:ballMenuResetItem.Enabled = ($null -ne $script:ballImage)
     }
+    Update-BallSizeChecks
     $size = $menu.GetPreferredSize([System.Drawing.Size]::Empty)
     $center = [System.Drawing.Point]::new(
       [int]($script:ballX + $script:ballSize / 2),
@@ -1759,7 +1864,8 @@ try {
   if ($ballDpi -lt 96) { $ballDpi = 96 }
   $ballScale = $ballDpi / 96.0
   $script:dpiScale = $ballScale
-  $script:ballSize = [int][Math]::Round(84 * $ballScale)
+  $script:ballSizeDip = Read-BallSizeSetting
+  $script:ballSize = [int][Math]::Round($script:ballSizeDip * $ballScale)
   $script:ballMargin = [int][Math]::Round($script:ballSize * 0.15)
   $script:ballWindow = $script:ballSize + 2 * $script:ballMargin
   $script:ballWindowHeight = $script:ballWindow
